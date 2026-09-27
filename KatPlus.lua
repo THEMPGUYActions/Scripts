@@ -461,6 +461,25 @@ createTab("Settings","⚙",4)
 createTab("Diagnostics","?",5)
 
 
+local NavFooter = new("TextLabel",{
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0,15,1,-62),
+	Size = UDim2.new(1,-30,0,44),
+	Font = Enum.Font.Gotham,
+	Text = "v"..VERSION.."\nAdaptive build",
+	TextColor3 = Muted,
+	TextSize = 10,
+	TextTransparency = 0.2,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Bottom
+},Nav)
+
+local PageHolder = new("Frame",{
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0,164,0,10),
+	Size = UDim2.new(1,-174,1,-20)
+},Content)
+
 -- =========================================================
 -- Responsive layout
 -- =========================================================
@@ -509,25 +528,6 @@ end
 
 track(Main:GetPropertyChangedSignal("AbsoluteSize"):Connect(updateResponsiveLayout))
 updateResponsiveLayout()
-
-local NavFooter = new("TextLabel",{
-	BackgroundTransparency = 1,
-	Position = UDim2.new(0,15,1,-62),
-	Size = UDim2.new(1,-30,0,44),
-	Font = Enum.Font.Gotham,
-	Text = "v"..VERSION.."\nAdaptive build",
-	TextColor3 = Muted,
-	TextSize = 10,
-	TextTransparency = 0.2,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	TextYAlignment = Enum.TextYAlignment.Bottom
-},Nav)
-
-local PageHolder = new("Frame",{
-	BackgroundTransparency = 1,
-	Position = UDim2.new(0,164,0,10),
-	Size = UDim2.new(1,-174,1,-20)
-},Content)
 
 local function makePage(name)
 	return new("ScrollingFrame",{
