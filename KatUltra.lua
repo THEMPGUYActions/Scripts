@@ -1,4 +1,4 @@
--- KAT Ultra 5.0
+-- KAT Ultra 5.2
 -- Small, standalone Roblox UI for sounds and client tools.
 -- The stress control stays client-side.
 
@@ -44,6 +44,11 @@ if not ReplicateSound then
 	ReplicateSound = findDescendant(ReplicatedStorage,"ReplicateSound","RemoteEvent")
 end
 
+-- Server-authoritative audio hook.
+-- The game owns the ClientEvent API; KAT only uses it when the event is
+-- exposed normally through the replicated hierarchy. No nil-instance lookup.
+local ClientEvent = findDescendant(ReplicatedStorage,"ClientEvent","RemoteEvent")
+
 if CoreGui:FindFirstChild("KATUltra") or CoreGui:FindFirstChild("KATUltraUI") then
 	return warn("KAT Ultra is already running")
 end
@@ -53,7 +58,7 @@ marker.Name = "KATUltra"
 marker.Value = true
 marker.Parent = CoreGui
 
-local VERSION = "5.1"
+local VERSION = "5.2"
 
 local C = {
 	bg = Color3.fromRGB(8,10,13),
@@ -347,8 +352,7 @@ local close=new("TextButton",{
 	Position=UDim2.new(1,-47,0,15),
 	Size=UDim2.fromOffset(31,31),
 	Text="X",
-	TextColor3=C.danger,
-	TextSize=10,
+	TextColor3=C.danger,	TextSize=10,
 	Font=Enum.Font.GothamBold,
 	ZIndex=12
 },header)
@@ -697,8 +701,7 @@ local Catalog={
 	{"Meme","I'm Batman","130769318"},
 	{"Meme","Pokérap","152381839"},
 	{"Meme","Rush B","474303247"},
-	{"SFX","Mine Turtle","138112414"},
-	{"SFX","FBI Open Up","2276169441"},
+	{"SFX","Mine Turtle","138112414"},	{"SFX","FBI Open Up","2276169441"},
 	{"SFX","Elevator Music","9119119619"},
 	{"SFX","Better Call Saul Theme","9106904975"},
 	{"SFX","I'm in My Mom's Car","170041353"},
@@ -755,22 +758,74 @@ local function forget(sound)
 	end
 end
 
-local function play(id,name,looped)
+local function getSoundTarget()
+	local character=LocalPlayer.Character
+	if not character then return nil end
+	return character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart")
+end
+
+local function playServer(id,name,looped)
 	local n=idOf(id)
 	if not n then
 		toast("Invalid audio ID.","error")
-		return nil
+		return false
 	end
+	if not ClientEvent or not ClientEvent:IsA("RemoteEvent") then
+		return false
+	end
+
+	local target=getSoundTarget()
+	if not target then
+		toast("Your character audio target is unavailable.","error")
+		return false
+	end
+
+	-- This matches the game's documented PlaySound payload:
+	-- {soundName, playerName, assetId, {target}, volume}
+	-- Looping is intentionally not added because the server API shown does
+	-- not accept a loop flag.
+	local ok,err=pcall(function()
+		ClientEvent:FireServer(
+			"PlaySound",
+			{
+				name or "KAT Ultra",
+				LocalPlayer.Name,
+				"rbxassetid://"..n,
+				{target},
+				math.clamp(state.volume,0,10)
+			}
+		)
+	end)
+
+	if not ok then
+		toast("Server audio failed: "..tostring(err),"error")
+		return false
+	end
+
+	state.lastSound=n
+	toast((name or "Sound").." sent to server.")
+	return true
+end
+
+local function play(id,name,looped)
+	-- Server-authoritative path first. Local playback remains as a fallback
+	-- for environments where the game's ClientEvent is not exposed.
+	if playServer(id,name,looped) then
+		return true
+	end
+
+	local n=idOf(id)
+	if not n then return nil end
 
 	local sound=newSound(n,looped)
 	if not sound then
-		toast("Could not create Sound.","error")
+		toast("Could not create local Sound.","error")
 		return nil
 	end
 
 	if not waitLoaded(sound,7) then
 		if sound.Parent then sound:Destroy() end
-		toast("Audio "..n.." did not load. The asset may be restricted, removed or unavailable here.","error")
+		toast("Server hook unavailable and local audio did not load.","error")
 		return nil
 	end
 
@@ -785,7 +840,7 @@ local function play(id,name,looped)
 		end)
 	end
 
-	toast((name or "Sound").." loaded and played.")
+	toast((name or "Sound").." played locally.")
 	return sound
 end
 
@@ -1047,8 +1102,7 @@ button(Tools,"SERVER HOP",function()
 				end
 			end
 			if destination then break end
-			cursor=decoded.nextPageCursor or ""
-			if cursor=="" then break end
+			cursor=decoded.nextPageCursor or ""			if cursor=="" then break end
 			task.wait()
 		end
 
@@ -1319,7 +1373,8 @@ local _,runtimeBody=card(
 local _,audioBody=card(
 	Diagnostics,
 	"Audio",
-	"Audio active\nTracked: 0\nGame hook found: "..tostring(ReplicateSound~=nil),
+	"Audio active\nTracked: 0\nServer audio hook: "..tostring(ClientEvent~=nil).."
+Legacy hook: "..tostring(ReplicateSound~=nil),
 	80,
 	3
 )
@@ -1397,8 +1452,7 @@ local function normalWindowSize()
 	local width
 	local height
 
-	if viewport.X < 650 or GuiService.ViewportDisplaySize==Enum.DisplaySize.Small then
-		width=math.max(300,math.min(620,viewport.X-30))
+	if viewport.X < 650 or GuiService.ViewportDisplaySize==Enum.DisplaySize.Small then		width=math.max(300,math.min(620,viewport.X-30))
 		height=math.max(220,math.min(680,viewport.Y-82))
 	else
 		width=math.min(820,math.max(520,viewport.X*.78))
@@ -1712,7 +1766,8 @@ task.spawn(function()
 		end
 
 		musicBody.Text="Volume: "..string.format("%.2f",state.volume).."\nActive KAT sounds: "..tostring(active)
-		audioBody.Text="Audio active\nTracked: "..tostring(active).."\nGame hook found: "..tostring(ReplicateSound~=nil)
+		audioBody.Text="Audio active\nTracked: "..tostring(active).."\nServer audio hook: "..tostring(ClientEvent~=nil).."
+Legacy hook: "..tostring(ReplicateSound~=nil)
 		runtimeBody.Text="Version: "..VERSION.."\nPlaceId: "..tostring(game.PlaceId).."\nInput: "..(UserInputService.TouchEnabled and "Touch" or "Keyboard / Mouse")
 		task.wait(1)
 	end
