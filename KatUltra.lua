@@ -1,8 +1,6 @@
--- KAT Ultra 4.1
--- Standalone UI + audio toolkit.
--- Designed for desktop and touch devices.
--- Audio entries are runtime-verified before they are marked OK.
--- Client stress intensity is local-only.
+-- KAT Ultra 5.0
+-- Small, standalone Roblox UI for sounds and client tools.
+-- The stress control stays client-side.
 
 repeat task.wait() until game:IsLoaded()
 task.wait(1)
@@ -55,7 +53,7 @@ marker.Name = "KATUltra"
 marker.Value = true
 marker.Parent = CoreGui
 
-local VERSION = "4.1"
+local VERSION = "5.0"
 
 local C = {
 	bg = Color3.fromRGB(8,10,13),
@@ -144,9 +142,9 @@ local function idOf(value)
 	return tostring(value or ""):match("%d+")
 end
 
--- =========================================================
+--
 -- Root
--- =========================================================
+--
 
 local uiParent=CoreGui
 if type(gethui)=="function" then
@@ -216,7 +214,6 @@ local main=new("Frame",{
 },root)
 round(main,20)
 border(main,C.accent,.5,1.5)
-new("UISizeConstraint",{MinSize=Vector2.new(300,280),MaxSize=Vector2.new(840,760)},main)
 local scale=new("UIScale",{Scale=.94},main)
 tw(scale,.45,{Scale=1},Enum.EasingStyle.Back)
 
@@ -268,6 +265,15 @@ local mobileClose=new("TextButton",{
 },mobileBar)
 round(mobileClose,9)
 
+local mobileDragHandle=new("Frame",{
+	Active=true,
+	BackgroundTransparency=1,
+	BorderSizePixel=0,
+	Position=UDim2.new(0,0,0,0),
+	Size=UDim2.new(1,-98,1,0),
+	ZIndex=91
+},mobileBar)
+
 local header=new("Frame",{
 	Active=true,
 	BackgroundColor3=C.surface,
@@ -300,7 +306,7 @@ new("TextLabel",{
 	Position=UDim2.new(0,16,0,34),
 	Size=UDim2.new(1,-240,0,19),
 	Font=Enum.Font.Gotham,
-	Text="Audio toolkit  •  "..VERSION,
+	Text="Sounds + tools  •  "..VERSION,
 	TextColor3=C.muted,
 	TextSize=10,
 	TextXAlignment=Enum.TextXAlignment.Left
@@ -344,6 +350,15 @@ local close=new("TextButton",{
 },header)
 round(close,9)
 
+local dragHandle=new("Frame",{
+	Active=true,
+	BackgroundTransparency=1,
+	BorderSizePixel=0,
+	Position=UDim2.new(0,0,0,0),
+	Size=UDim2.new(1,-88,1,0),
+	ZIndex=11
+},header)
+
 local body=new("Frame",{
 	BackgroundTransparency=1,
 	Position=UDim2.new(0,0,0,63),
@@ -383,7 +398,7 @@ local sideFooter=new("TextLabel",{
 	Position=UDim2.new(0,14,1,-55),
 	Size=UDim2.new(1,-28,0,38),
 	Font=Enum.Font.Gotham,
-	Text="KAT Ultra "..VERSION.."\nAdaptive UI",
+	Text="KAT Ultra "..VERSION.."\nTouch + desktop",
 	TextColor3=C.muted,
 	TextSize=9,
 	TextXAlignment=Enum.TextXAlignment.Left,
@@ -494,9 +509,9 @@ tabs.Sounds.icon.TextColor3=C.accent
 tabs.Sounds.label.TextColor3=C.text
 Sounds.Visible=true
 
--- =========================================================
+--
 -- Toasts
--- =========================================================
+--
 
 local toastHolder=new("Frame",{
 	AnchorPoint=Vector2.new(1,0),
@@ -552,9 +567,9 @@ local function toast(message,kind)
 	end)
 end
 
--- =========================================================
+--
 -- Common controls
--- =========================================================
+--
 
 local function section(parent,title,subtitle,order)
 	local box=new("Frame",{
@@ -645,9 +660,9 @@ local function card(parent,title,body,height,order)
 	return f,bodyLabel
 end
 
--- =========================================================
+--
 -- Sound catalog
--- =========================================================
+--
 
 local Catalog={
 	{"Meme","Brainrot Skibidi Sigma 67","133664122932845"},
@@ -692,9 +707,9 @@ local Catalog={
 	{"Music","Natural","2173344520"}
 }
 
--- =========================================================
+--
 -- Audio engine
--- =========================================================
+--
 
 local group=Instance.new("SoundGroup")
 group.Name="KATUltraLocal"
@@ -802,11 +817,11 @@ local function verify(id)
 	return ok
 end
 
--- =========================================================
+--
 -- Sounds page
--- =========================================================
+--
 
-section(Sounds,"Soundboard","Every catalog card can perform a live client-side availability check.",1)
+section(Sounds,"Soundboard","Check an asset when it looks unavailable, then play it locally.",1)
 
 local searchBox=new("TextBox",{
 	BackgroundColor3=C.surface,
@@ -855,7 +870,7 @@ local customStop=button(custom,"STOP",stopAll,C.surface2,3)
 customStop.Position=UDim2.new(.81,0,0,0)
 customStop.Size=UDim2.new(.19,0,1,0)
 
-card(Sounds,"Catalog","The list below uses IDs from current 2026 working-code lists; green OK is only awarded after this client loads the asset.",62,4)
+card(Sounds,"Catalog","CHECK loads the asset on this client. PLAY starts it after a successful load.",62,4)
 
 connect(searchBox:GetPropertyChangedSignal("Text"),function()
 	state.search=string.lower(searchBox.Text)
@@ -949,9 +964,9 @@ for index,row in ipairs(Catalog) do
 	table.insert(cards,{frame=f,name=name,kind=kind,id=id})
 end
 
--- =========================================================
+--
 -- Music page
--- =========================================================
+--
 
 section(Music,"Music","Loop tracks here. Playback uses the same load check as the soundboard.",1)
 
@@ -979,16 +994,16 @@ button(Music,"STOP ALL MUSIC",stopAll,C.surface2,4)
 
 local _,musicBody=card(Music,"Playback","Volume: 1.00\nActive KAT sounds: 0",70,5)
 
--- =========================================================
+--
 -- Tools page
--- =========================================================
+--
 
-section(Tools,"Tools","Server switching and client utilities. The stress control is local-only.",1)
+section(Tools,"Tools","Server hop, audio controls, and a small client stress test.",1)
 
 local _,toolStatus=card(
 	Tools,
-	"Game detection",
-	"GameUI: "..tostring(GameUI~=nil).."\nInterface: "..tostring(Interface~=nil).."\nAudio integration: "..tostring(ReplicateSound~=nil),
+	"Game hooks",
+	"GameUI: "..tostring(GameUI~=nil).."\nInterface: "..tostring(Interface~=nil).."\nSound hook: "..tostring(ReplicateSound~=nil),
 	86,
 	2
 )
@@ -1134,9 +1149,9 @@ connect(UserInputService.InputEnded,function(input)
 	end
 end)
 
--- =========================================================
+--
 -- Settings
--- =========================================================
+--
 
 section(Settings,"Settings","Touch-friendly controls plus editable keyboard shortcuts.",1)
 
@@ -1250,9 +1265,9 @@ button(Settings,"CENTER WINDOW",function()
 	toast("Window centered.")
 end,C.surface2,8)
 
--- =========================================================
+--
 -- Diagnostics
--- =========================================================
+--
 
 section(Diagnostics,"Diagnostics","Live values, audio checks and device details.",1)
 
@@ -1267,7 +1282,7 @@ local _,runtimeBody=card(
 local _,audioBody=card(
 	Diagnostics,
 	"Audio",
-	"Local pipeline active\nTracked: 0\nGame integration detected: "..tostring(ReplicateSound~=nil),
+	"Audio active\nTracked: 0\nGame hook found: "..tostring(ReplicateSound~=nil),
 	80,
 	3
 )
@@ -1288,70 +1303,194 @@ button(Diagnostics,"TEST MORNING MOOD",function() play("1846088038","Morning Moo
 button(Diagnostics,"TEST MINE TURTLE",function() play("138112414","Mine Turtle",false) end,C.surface2,7)
 button(Diagnostics,"STOP TEST AUDIO",stopAll,C.surface2,8)
 
--- =========================================================
--- Window state / drag
--- =========================================================
+-- Window controls
+
+local statePosition=main.Position
+local dragging=false
+local dragInput=nil
+local dragStart=nil
+local mainStart=nil
+local barStart=nil
 
 local function setOpen(open)
 	state.open=open
-	shade.Visible=open
-	main.Visible=open
-	shadow.Visible=open
+	if open then
+		main.Visible=not state.minimized
+		shadow.Visible=not state.minimized
+		shade.Visible=true
+		mobileBar.Visible=UserInputService.TouchEnabled
+		launcher.Visible=false
+	else
+		main.Visible=false
+		shadow.Visible=false
+		shade.Visible=false
+		mobileBar.Visible=UserInputService.TouchEnabled
+		mobileMin.Text="+"
+		launcher.Visible=true
+	end
+end
+
+local function normalWindowSize()
+	local viewport=root.AbsoluteSize
+	local width
+	local height
+
+	if viewport.X < 650 or GuiService.ViewportDisplaySize==Enum.DisplaySize.Small then
+		width=math.max(300,math.min(620,viewport.X-30))
+		height=math.max(220,math.min(680,viewport.Y-82))
+	else
+		width=math.min(820,math.max(520,viewport.X*.78))
+		height=math.min(720,math.max(360,viewport.Y*.80))
+	end
+
+	return UDim2.fromOffset(width,height)
+end
+
+local function centerWindow()
+	local size=main.AbsoluteSize
+	local viewport=root.AbsoluteSize
+	if size.X<=0 or size.Y<=0 or viewport.X<=0 or viewport.Y<=0 then return end
+
+	if UserInputService.TouchEnabled then
+		local barHeight=mobileBar.AbsoluteSize.Y
+		local x=viewport.X*.5
+		local y=barHeight+8+size.Y*.5
+		main.Position=UDim2.fromOffset(x,y)
+	else
+		main.Position=UDim2.fromOffset(viewport.X*.5,viewport.Y*.5)
+	end
+	shadow.Position=main.Position
+	statePosition=main.Position
 end
 
 local function setMinimized(minimized)
 	state.minimized=minimized
-	body.Visible=not minimized
-
 	if minimized then
-		tw(main,.2,{Size=UserInputService.TouchEnabled and UDim2.new(1,-14,0,63) or UDim2.new(.56,0,0,63)})
-		tw(shadow,.2,{Size=UserInputService.TouchEnabled and UDim2.new(1,-14,0,63) or UDim2.new(.56,0,0,63)})
+		statePosition=main.Position
+		body.Visible=false
+		if UserInputService.TouchEnabled then
+			main.Visible=false
+			shadow.Visible=false
+			mobileMin.Text="+"
+		else
+			main.Visible=true
+			shadow.Visible=true
+			mobileMin.Text="+"
+			tw(main,.18,{Size=UDim2.fromOffset(420,63)})
+			tw(shadow,.18,{Size=UDim2.fromOffset(420,63)})
+		end
 	else
-		tw(main,.2,{Size=UserInputService.TouchEnabled and UDim2.new(1,-14,1,-92) or UDim2.new(.78,0,.8,0)})
-		tw(shadow,.2,{Size=UserInputService.TouchEnabled and UDim2.new(1,-14,1,-92) or UDim2.new(.78,0,.8,0)})
+		body.Visible=true
+		main.Visible=true
+		shadow.Visible=true
+		mobileMin.Text="-"
+		main.Size=normalWindowSize()
+		shadow.Size=main.Size
+		main.Position=statePosition
+		shadow.Position=statePosition
+	end
+	layout()
+end
+
+local function clampTopLeft(x,y,width,height,extraTop)
+	local viewport=root.AbsoluteSize
+	local topMin=extraTop or 6
+	local left=math.clamp(x,6,math.max(6,viewport.X-width-6))
+	local top=math.clamp(y,topMin,math.max(topMin,viewport.Y-height-6))
+	return left,top
+end
+
+local function beginDrag(input)
+	if not state.open or state.minimized then return end
+	if input.UserInputType~=Enum.UserInputType.MouseButton1 and input.UserInputType~=Enum.UserInputType.Touch then return end
+
+	dragging=true
+	dragInput=input
+	dragStart=input.Position
+	mainStart=main.AbsolutePosition
+	barStart=mobileBar.AbsolutePosition
+end
+
+local function updateDrag(input)
+	if not dragging or not dragInput then return end
+	if input~=dragInput and input.UserInputType~=Enum.UserInputType.MouseMovement then return end
+
+	local delta=input.Position-dragStart
+	if UserInputService.TouchEnabled then
+		local barSize=mobileBar.AbsoluteSize
+		local barX,barY=clampTopLeft(barStart.X+delta.X,barStart.Y+delta.Y,barSize.X,barSize.Y,2)
+		mobileBar.Position=UDim2.fromOffset(barX,barY)
+
+		local mainSize=main.AbsoluteSize
+		local mainTop=barY+barSize.Y+7
+		local mainX=barX+(barSize.X-mainSize.X)*.5
+		local maxX=math.max(6,root.AbsoluteSize.X-mainSize.X-6)
+		local maxY=math.max(mainTop,root.AbsoluteSize.Y-mainSize.Y-6)
+		mainX=math.clamp(mainX,6,maxX)
+		mainTop=math.clamp(mainTop,mainTop,maxY)
+		main.Position=UDim2.fromOffset(mainX+mainSize.X*.5,mainTop+mainSize.Y*.5)
+		shadow.Position=main.Position
+	else
+		local mainSize=main.AbsoluteSize
+		local x,y=clampTopLeft(mainStart.X+delta.X,mainStart.Y+delta.Y,mainSize.X,mainSize.Y,6)
+		main.Position=UDim2.fromOffset(x+mainSize.X*.5,y+mainSize.Y*.5)
+		shadow.Position=main.Position
 	end
 end
+
+local function endDrag(input)
+	if dragging and input==dragInput then
+		dragging=false
+		dragInput=nil
+		statePosition=main.Position
+	end
+end
+
+connect(dragHandle.InputBegan,beginDrag)
+connect(mobileDragHandle.InputBegan,beginDrag)
+connect(UserInputService.InputChanged,updateDrag)
+connect(UserInputService.InputEnded,endDrag)
 
 connect(minus.Activated,function() setMinimized(not state.minimized) end)
 connect(mobileMin.Activated,function() setMinimized(not state.minimized) end)
 connect(close.Activated,function() setOpen(false) end)
 connect(mobileClose.Activated,function() setOpen(false) end)
-connect(launcher.Activated,function() setOpen(not state.open) end)
-
-local dragging=false
-local dragStart=nil
-local dragOrigin=nil
-
-connect(header.InputBegan,function(input)
-	if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
-		dragging=true
-		dragStart=input.Position
-		dragOrigin=main.Position
-		connect(input.Changed,function()
-			if input.UserInputState==Enum.UserInputState.End then dragging=false end
-		end)
-	end
+connect(launcher.Activated,function()
+	state.minimized=false
+	main.Size=normalWindowSize()
+	shadow.Size=main.Size
+	mobileBar.Position=UDim2.new(.5,-150,0,7)
+	centerWindow()
+	setOpen(true)
 end)
 
-connect(UserInputService.InputChanged,function(input)
-	if not dragging then return end
-	if input.UserInputType~=Enum.UserInputType.MouseMovement and input.UserInputType~=Enum.UserInputType.Touch then return end
-	local delta=input.Position-dragStart
-	main.Position=UDim2.new(dragOrigin.X.Scale,dragOrigin.X.Offset+delta.X,dragOrigin.Y.Scale,dragOrigin.Y.Offset+delta.Y)
-	shadow.Position=main.Position
-end)
-
--- =========================================================
 -- Responsive layout
--- =========================================================
 
-local function layout()
-	local small=UserInputService.TouchEnabled or main.AbsoluteSize.X<470 or GuiService.ViewportDisplaySize==Enum.DisplaySize.Small
-	mobileBar.Visible=UserInputService.TouchEnabled
+function layout()
+	local viewport=root.AbsoluteSize
+	local touch=UserInputService.TouchEnabled
+	mobileBar.Visible=touch and state.open
 
-	if small then
-		main.Size=UDim2.new(1,-14,1,-92)
-		shadow.Size=main.Size
+	if touch then
+		mobileBar.Size=UDim2.new(1,-14,0,46)
+		header.Visible=false
+		body.Position=UDim2.new(0,0,0,0)
+		body.Size=UDim2.fromScale(1,1)
+
+		if state.open and not state.minimized then
+			main.Size=normalWindowSize()
+			shadow.Size=main.Size
+			local size=main.AbsoluteSize
+			local barSize=mobileBar.AbsoluteSize
+			if mobileBar.AbsolutePosition.X==0 and mobileBar.AbsolutePosition.Y==0 then
+				mobileBar.Position=UDim2.new(.5,-math.min(150,viewport.X*.5-7),0,7)
+			end
+			local left=math.max(6,mobileBar.AbsolutePosition.X+(barSize.X-size.X)*.5)
+			local top=math.max(barSize.Y+7,6)
+			main.Position=UDim2.fromOffset(left+size.X*.5,top+size.Y*.5)
+			shadow.Position=main.Position
+		end
+
 		sidebar.Size=UDim2.new(0,57,1,-18)
 		sideTitle.Text="K"
 		sideTitle.TextXAlignment=Enum.TextXAlignment.Center
@@ -1367,8 +1506,14 @@ local function layout()
 			data.icon.TextXAlignment=Enum.TextXAlignment.Center
 		end
 	else
-		main.Size=UDim2.new(.78,0,.8,0)
-		shadow.Size=main.Size
+		header.Visible=true
+		body.Position=UDim2.new(0,0,0,63)
+		body.Size=UDim2.new(1,0,1,-63)
+		mobileBar.Visible=false
+		if state.open and not state.minimized then
+			main.Size=normalWindowSize()
+			shadow.Size=main.Size
+		end
 		sidebar.Size=UDim2.new(0,142,1,-18)
 		sideTitle.Text="ULTRA"
 		sideTitle.TextXAlignment=Enum.TextXAlignment.Left
@@ -1384,17 +1529,28 @@ local function layout()
 			data.icon.TextXAlignment=Enum.TextXAlignment.Left
 		end
 	end
+
+	mobileMin.Text=state.minimized and "+" or "-"
 end
 
-connect(main:GetPropertyChangedSignal("AbsoluteSize"),layout)
-connect(GuiService:GetPropertyChangedSignal("ViewportDisplaySize"),layout)
-connect(UserInputService:GetPropertyChangedSignal("PreferredInput"),layout)
+connect(root:GetPropertyChangedSignal("AbsoluteSize"),function()
+	if state.open and not state.minimized then layout() end
+end)
+connect(GuiService:GetPropertyChangedSignal("ViewportDisplaySize"),function()
+	if state.open and not state.minimized then layout() end
+end)
+connect(UserInputService:GetPropertyChangedSignal("PreferredInput"),function()
+	if state.open and not state.minimized then layout() end
+end)
 layout()
+main.Size=normalWindowSize()
+shadow.Size=main.Size
+centerWindow()
 setOpen(true)
 
--- =========================================================
+--
 -- Keybind handling
--- =========================================================
+--
 
 connect(UserInputService.InputBegan,function(input,processed)
 	if input.UserInputType~=Enum.UserInputType.Keyboard then return end
@@ -1429,9 +1585,9 @@ connect(UserInputService.InputBegan,function(input,processed)
 	end
 end)
 
--- =========================================================
+--
 -- Live stats / local stress
--- =========================================================
+--
 
 task.spawn(function()
 	while screen.Parent do
@@ -1441,7 +1597,7 @@ task.spawn(function()
 		end
 
 		musicBody.Text="Volume: "..string.format("%.2f",state.volume).."\nActive KAT sounds: "..tostring(active)
-		audioBody.Text="Local pipeline active\nTracked: "..tostring(active).."\nGame integration detected: "..tostring(ReplicateSound~=nil)
+		audioBody.Text="Audio active\nTracked: "..tostring(active).."\nGame hook found: "..tostring(ReplicateSound~=nil)
 		runtimeBody.Text="Version: "..VERSION.."\nPlaceId: "..tostring(game.PlaceId).."\nInput: "..(UserInputService.TouchEnabled and "Touch" or "Keyboard / Mouse")
 		task.wait(1)
 	end
@@ -1465,5 +1621,4 @@ task.delay(.35,function()
 	toast("KAT Ultra "..VERSION.." loaded.")
 end)
 
-print("[KAT Ultra] Standalone build loaded.")
-print("[KAT Ultra] Game integration:",ReplicateSound and "detected" or "not detected")
+print("[KAT Ultra] Loaded.")
