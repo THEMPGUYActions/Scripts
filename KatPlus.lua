@@ -740,28 +740,21 @@ function DefaultData(Path,Option)
 	end
 	end
 	
-	if not isfolder("NaikoScript") and not isfolder("NaikoScript/KatPlus") then
-	makefolder("NaikoScript")
-	makefolder("NaikoScript/KatPlus")
-	DefaultData("ToolDelete.txt","Disabled")
-	DefaultData("Headshot.txt","false")
-	DefaultData("ServerHop.txt","false")
-	DefaultData("TargetServer.JobId","None")
-	UserType = 1
-	elseif isfolder("NaikoScript") and not isfolder("NaikoScript/KatPlus") then
-	UserType = 2
-	makefolder("NaikoScript/KatPlus")
-	DefaultData("ToolDelete.txt","Disabled")
-	DefaultData("Headshot.txt","false")
-	DefaultData("ServerHop.txt","false")
-	DefaultData("TargetServer.JobId","None")
-	elseif isfolder("NaikoScript") and isfolder("NaikoScript/KatPlus") then
-	UserType = 3
-	DefaultData("ToolDelete.txt","Disabled")
-	DefaultData("Headshot.txt","false")
-	DefaultData("ServerHop.txt","false")
-	DefaultData("TargetServer.JobId","None")
+	if not isfolder("NaikoScript") then
+		makefolder("NaikoScript")
+		UserType = 1
+	else
+		UserType = 2
 	end
+
+	if not isfolder("NaikoScript/KatPlus") then
+		makefolder("NaikoScript/KatPlus")
+	end
+
+	DefaultData("ToolDelete.txt","Disabled")
+	DefaultData("Headshot.txt","false")
+	DefaultData("ServerHop.txt","false")
+	DefaultData("TargetServer.JobId","None")
 	local ValueUser = Instance.new("NumberValue")
 	ValueUser.Parent = game:GetService("CoreGui")
 	ValueUser.Name = "UserType"
@@ -1015,9 +1008,9 @@ Template7Button.MouseButton1Click:Connect(function()
 end)
 
 if ReturnData("TargetServer.JobId") == tostring(game.JobId) then
-	Raid()
-	else
-		ChangeData("TargetServer.JobId","None")
+	ChangeData("TargetServer.JobId","None")
+else
+	ChangeData("TargetServer.JobId","None")
 end
 
 ColoredPrint("Kat plus has loaded successfully",Color3.fromRGB(0,200,125),{"success",true})
