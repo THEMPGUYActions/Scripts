@@ -4,8 +4,6 @@ repeat task.wait() until game:IsLoaded() and task.wait(1.5)
 
 if game:GetService("CoreGui"):FindFirstChild("Plus") then
 	return warn("Script already running")	
-else
-	return warn("Incorrect game")
 end
 Instance.new("BoolValue",game:GetService("CoreGui")).Name = "Plus"
 
