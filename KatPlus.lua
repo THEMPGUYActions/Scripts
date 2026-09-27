@@ -1643,6 +1643,19 @@ function RPT(Player,ToolType)
 end
 
 function S(ID,instance,Volume,Looped,LocalVolume)
+	if not tonumber(ID) then return end
+	if ReplicateSound and ReplicateSound:IsA("RemoteEvent") then
+		pcall(function()
+			ReplicateSound:FireServer({
+				"PlaySound",
+				LocalPlayer.Name,
+				"rbxassetid://"..tostring(ID),
+				{instance},
+				tonumber(Volume) or 1,
+				Looped == true
+			})
+		end)
+	end
 	return PlaySound(ID,"Quick Sound",LocalVolume or Volume or 1,Looped == true)
 end
 
