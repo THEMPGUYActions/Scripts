@@ -4,7 +4,7 @@ repeat task.wait() until game:IsLoaded() and task.wait(1.5)
 
 if game:GetService("CoreGui"):FindFirstChild("Plus") then
 	return warn("Script already running")
-elseif tostring(game.GameId) == "3231515867" then
+elseif tostring(game.GameId) == "621129760" then
 	Instance.new("BoolValue",game:GetService("CoreGui")).Name = "Plus"
 else
 	return warn("Incorrect game")
