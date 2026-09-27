@@ -1,6 +1,7 @@
 -- KAT Ultra
--- Rebuilt UI + audio pipeline
--- Original legacy routines are retained below without modification.
+-- Full UI rebuild for desktop + mobile.
+-- Existing disruption routines are retained at the bottom.
+-- The intensity control only affects the local diagnostic stress test.
 
 repeat task.wait() until game:IsLoaded()
 task.wait(1)
@@ -14,26 +15,28 @@ local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
 local TeleportService = game:GetService("TeleportService")
+local GuiService = game:GetService("GuiService")
+
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer and (LocalPlayer:FindFirstChildOfClass("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui",20))
+
+if not LocalPlayer or not PlayerGui then
+	return warn("KAT Ultra: PlayerGui was not ready")
+end
 
 if CoreGui:FindFirstChild("KATUltra") then
 	return warn("KAT Ultra is already running")
 end
 
-local LocalPlayer = Players.LocalPlayer
-local PlayerGui = LocalPlayer and (LocalPlayer:FindFirstChildOfClass("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui",20))
-if not LocalPlayer or not PlayerGui then
-	return warn("KAT Ultra: PlayerGui was not ready")
-end
-
 -- =========================================================
--- Adaptive game detection
+-- Live game detection
 -- =========================================================
 
 local function findDescendant(root, name, className)
 	if not root then return nil end
-	local preferred = root:FindFirstChild(name)
-	if preferred and (not className or preferred:IsA(className)) then
-		return preferred
+	local direct = root:FindFirstChild(name)
+	if direct and (not className or direct:IsA(className)) then
+		return direct
 	end
 	for _, object in ipairs(root:GetDescendants()) do
 		if object.Name == name and (not className or object:IsA(className)) then
@@ -48,8 +51,8 @@ local HUD = GameUI and GameUI:FindFirstChild("HUD")
 local Interface = GameUI and GameUI:FindFirstChild("Interface")
 local BottomBar = Interface and Interface:FindFirstChild("BottomBar")
 local SideButtons = Interface and Interface:FindFirstChild("SideButtons")
-local SettingsPane = Interface and Interface:FindFirstChild("SettingsPane")
 local Round = HUD and HUD:FindFirstChild("Round")
+local SettingsPane = Interface and Interface:FindFirstChild("SettingsPane")
 
 local GameEvents = ReplicatedStorage:FindFirstChild("GameEvents")
 local Misk = GameEvents and GameEvents:FindFirstChild("Misk")
@@ -66,7 +69,6 @@ if BottomBar then structureScore += 1 end
 if SideButtons then structureScore += 1 end
 if SettingsPane then structureScore += 1 end
 if Round then structureScore += 1 end
-if ReplicateSound and ReplicateSound:IsA("RemoteEvent") then structureScore += 2 end
 
 if structureScore < 4 then
 	return warn("KAT Ultra: compatible game structure was not detected")
@@ -78,46 +80,51 @@ Marker.Value = true
 Marker.Parent = CoreGui
 
 -- =========================================================
--- Runtime state
+-- Theme / state
 -- =========================================================
 
-local VERSION = "3.0"
-local Accent = Color3.fromRGB(88, 255, 184)
-local Accent2 = Color3.fromRGB(105, 140, 255)
-local Background = Color3.fromRGB(10, 12, 15)
-local Surface = Color3.fromRGB(17, 20, 25)
-local Surface2 = Color3.fromRGB(23, 27, 33)
-local Surface3 = Color3.fromRGB(29, 34, 41)
-local Text = Color3.fromRGB(241, 245, 247)
-local Muted = Color3.fromRGB(145, 155, 166)
-local Danger = Color3.fromRGB(255, 91, 105)
-local Warning = Color3.fromRGB(255, 194, 96)
+local VERSION = "4.0"
 
-local ActiveSounds = {}
-local SoundCards = {}
-local SavedSounds = {}
-local CurrentVolume = 1
-local BroadcastRemote = false
-local InsanityMode = false
-local CurrentTab = "Sounds"
-local SearchText = ""
-local WindowOpen = true
-local WindowMinimized = false
-local UIConnections = {}
+local Colors = {
+	Background = Color3.fromRGB(9,11,14),
+	Surface = Color3.fromRGB(15,18,23),
+	Surface2 = Color3.fromRGB(21,25,31),
+	Surface3 = Color3.fromRGB(28,33,41),
+	Border = Color3.fromRGB(49,58,69),
+	Text = Color3.fromRGB(242,246,249),
+	Muted = Color3.fromRGB(143,153,165),
+	Accent = Color3.fromRGB(87,255,184),
+	Accent2 = Color3.fromRGB(112,145,255),
+	Warn = Color3.fromRGB(255,194,90),
+	Danger = Color3.fromRGB(255,86,105),
+	Black = Color3.fromRGB(0,0,0)
+}
 
-local hasFileAPI =
-	type(isfile) == "function" and
-	type(writefile) == "function" and
-	type(isfolder) == "function" and
-	type(makefolder) == "function"
+local State = {
+	open = true,
+	minimized = false,
+	tab = "Sounds",
+	volume = 1,
+	search = "",
+	localStress = 0,
+	lastSound = nil,
+	keybinds = {
+		Toggle = Enum.KeyCode.RightControl,
+		Stop = Enum.KeyCode.RightShift,
+		FocusSearch = Enum.KeyCode.F,
+		Mute = Enum.KeyCode.M
+	}
+}
 
--- =========================================================
--- Small helpers
--- =========================================================
+local TrackedSounds = {}
+local CatalogCards = {}
+local Connections = {}
+local Rebinding = nil
 
-local function track(connection)
-	table.insert(UIConnections,connection)
-	return connection
+local function connect(signal, callback)
+	local c = signal:Connect(callback)
+	table.insert(Connections,c)
+	return c
 end
 
 local function new(className, properties, parent)
@@ -136,7 +143,7 @@ local function corner(object, radius)
 	return c
 end
 
-local function stroke(object, color, transparency, thickness)
+local function outline(object, color, transparency, thickness)
 	local s = object:FindFirstChildOfClass("UIStroke") or Instance.new("UIStroke")
 	s.Color = color
 	s.Transparency = transparency or 0
@@ -146,13 +153,18 @@ local function stroke(object, color, transparency, thickness)
 	return s
 end
 
-local function tween(object, info, properties)
-	local animation = TweenService:Create(object,info,properties)
-	animation:Play()
-	return animation
+local function animate(object, duration, properties, style, direction)
+	local info = TweenInfo.new(
+		duration or 0.18,
+		style or Enum.EasingStyle.Quart,
+		direction or Enum.EasingDirection.Out
+	)
+	local t = TweenService:Create(object,info,properties)
+	t:Play()
+	return t
 end
 
-local function setClipboard(value)
+local function safeClipboard(value)
 	if type(setclipboard) == "function" then
 		local ok = pcall(setclipboard,tostring(value))
 		return ok
@@ -165,55 +177,30 @@ local function setClipboard(value)
 end
 
 local function normalizeId(value)
-	local textValue = tostring(value or "")
-	local id = textValue:match("%d+")
-	return id
+	return tostring(value or ""):match("%d+")
 end
 
-local function notify(message, kind)
-	if not ToastHolder or not ToastTemplate then
-		warn("[KAT Ultra] "..tostring(message))
-		return
-	end
-
-	local toast = ToastTemplate:Clone()
-	toast.Visible = true
-	toast.Name = "Toast"
-	toast.Parent = ToastHolder
-	toast.Position = UDim2.new(1,20,0,0)
-	toast.BackgroundTransparency = 0.04
-
-	local tint = Accent
-	if kind == "error" then
-		tint = Danger
-	elseif kind == "warn" then
-		tint = Warning
-	end
-
-	local stripe = toast:FindFirstChild("Stripe")
-	if stripe then stripe.BackgroundColor3 = tint end
-
-	local label = toast:FindFirstChild("Message")
-	if label then label.Text = tostring(message) end
-
-	tween(toast,TweenInfo.new(0.25,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),{
-		Position = UDim2.new(0,0,0,0)
-	})
-
-	task.delay(2.8,function()
-		if toast and toast.Parent then
-			tween(toast,TweenInfo.new(0.22,Enum.EasingStyle.Quad,Enum.EasingDirection.In),{
-				Position = UDim2.new(1,20,0,0),
-				BackgroundTransparency = 1
-			})
-			task.wait(0.25)
-			if toast.Parent then toast:Destroy() end
+local function destroyTracked(sound)
+	for i,v in ipairs(TrackedSounds) do
+		if v == sound then
+			table.remove(TrackedSounds,i)
+			break
 		end
-	end)
+	end
+end
+
+local function updateSoundCount()
+	local count = 0
+	for _,sound in ipairs(TrackedSounds) do
+		if sound and sound.Parent then
+			count += 1
+		end
+	end
+	return count
 end
 
 -- =========================================================
--- UI
+-- Root UI
 -- =========================================================
 
 local UIParent = CoreGui
@@ -226,323 +213,337 @@ end
 
 local Screen = new("ScreenGui",{
 	Name = "KATUltraUI",
-	IgnoreGuiInset = true,
 	ResetOnSpawn = false,
-	DisplayOrder = 2147483647,
+	IgnoreGuiInset = false,
+	DisplayOrder = 999999,
 	ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 },UIParent)
 
+pcall(function()
+	Screen.ScreenInsets = Enum.ScreenInsets.TopbarSafeInsets
+end)
+
 local Root = new("Frame",{
-	Name = "Root",
 	BackgroundTransparency = 1,
 	Size = UDim2.fromScale(1,1)
 },Screen)
 
-local Launcher = new("TextButton",{
-	Name = "Launcher",
-	AutoButtonColor = false,
-	BackgroundColor3 = Surface,
+local Backdrop = new("Frame",{
+	BackgroundColor3 = Colors.Black,
+	BackgroundTransparency = 0.55,
 	BorderSizePixel = 0,
-	Position = UDim2.new(1,-76,1,-76),
-	Size = UDim2.fromOffset(56,56),
-	Text = "K",
-	TextColor3 = Text,
-	TextSize = 24,
-	Font = Enum.Font.GothamBold
+	Size = UDim2.fromScale(1,1),
+	Visible = false,
+	ZIndex = 1
 },Root)
-corner(Launcher,16)
-stroke(Launcher,Accent,0.25,2)
 
-local LauncherScale = new("UIScale",{Scale = 0.85},Launcher)
-tween(LauncherScale,TweenInfo.new(0.55,Enum.EasingStyle.Back,Enum.EasingDirection.Out),{Scale = 1})
+local MobileTopBar = new("Frame",{
+	BackgroundColor3 = Colors.Surface,
+	BorderSizePixel = 0,
+	Position = UDim2.new(0,7,0,7),
+	Size = UDim2.new(1,-14,0,48),
+	Visible = UserInputService.TouchEnabled,
+	ZIndex = 20
+},Root)
+corner(MobileTopBar,14)
+outline(MobileTopBar,Colors.Border,0,1)
+
+local MobileTitle = new("TextLabel",{
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0,14,0,0),
+	Size = UDim2.new(1,-120,1,0),
+	Font = Enum.Font.GothamBold,
+	Text = "KAT ULTRA",
+	TextColor3 = Colors.Text,
+	TextSize = 16,
+	TextXAlignment = Enum.TextXAlignment.Left
+},MobileTopBar)
+
+local MobileMinus = new("TextButton",{
+	AutoButtonColor = false,
+	BackgroundColor3 = Colors.Surface2,
+	BorderSizePixel = 0,
+	Position = UDim2.new(1,-96,0,7),
+	Size = UDim2.fromOffset(38,34),
+	Text = "-",
+	TextColor3 = Colors.Text,
+	TextSize = 18,
+	Font = Enum.Font.GothamBold
+},MobileTopBar)
+corner(MobileMinus,10)
+
+local MobileClose = new("TextButton",{
+	AutoButtonColor = false,
+	BackgroundColor3 = Colors.Surface2,
+	BorderSizePixel = 0,
+	Position = UDim2.new(1,-50,0,7),
+	Size = UDim2.fromOffset(38,34),
+	Text = "X",
+	TextColor3 = Colors.Danger,
+	TextSize = 13,
+	Font = Enum.Font.GothamBold
+},MobileTopBar)
+corner(MobileClose,10)
 
 local Shadow = new("Frame",{
-	Name = "Shadow",
 	AnchorPoint = Vector2.new(0.5,0.5),
-	BackgroundColor3 = Color3.new(0,0,0),
-	BackgroundTransparency = 0.48,
+	BackgroundColor3 = Colors.Black,
+	BackgroundTransparency = 0.45,
 	BorderSizePixel = 0,
-	Position = UDim2.fromScale(0.5,0.52),
-	Size = UDim2.new(0.78,0,0.82,0),
-	ZIndex = 0
+	Position = UDim2.fromScale(0.5,0.51),
+	Size = UDim2.new(0.78,0,0.8,0),
+	ZIndex = 2
 },Root)
-corner(Shadow,22)
+corner(Shadow,20)
 
 local Main = new("Frame",{
-	Name = "Main",
+	Active = true,
 	AnchorPoint = Vector2.new(0.5,0.5),
-	BackgroundColor3 = Background,
+	BackgroundColor3 = Colors.Background,
 	BorderSizePixel = 0,
 	ClipsDescendants = true,
 	Position = UDim2.fromScale(0.5,0.5),
-	Size = UDim2.new(0.78,0,0.82,0),
-	ZIndex = 2
+	Size = UDim2.new(0.78,0,0.8,0),
+	ZIndex = 3
 },Root)
 corner(Main,20)
-stroke(Main,Accent,0.48,1.5)
+outline(Main,Colors.Accent,0.5,1.5)
 
-local MainSizeConstraint = new("UISizeConstraint",{
-	MinSize = Vector2.new(320,300),
-	MaxSize = Vector2.new(760,760)
+new("UISizeConstraint",{
+	MinSize = Vector2.new(300,280),
+	MaxSize = Vector2.new(820,760)
 },Main)
 
--- The window is sized responsively below; no fixed aspect ratio is used so portrait phones do not clip the panel.
-
-local MainScale = new("UIScale",{Scale = 0},Main)
-tween(MainScale,TweenInfo.new(0.52,Enum.EasingStyle.Back,Enum.EasingDirection.Out),{Scale = 1})
+local WindowScale = new("UIScale",{Scale = 0.92},Main)
+animate(WindowScale,0.5,{Scale = 1},Enum.EasingStyle.Back)
 
 local Header = new("Frame",{
-	Name = "Header",
 	Active = true,
-	BackgroundColor3 = Surface,
+	BackgroundColor3 = Colors.Surface,
 	BorderSizePixel = 0,
-	Size = UDim2.new(1,0,0,74),
-	ZIndex = 5
+	Size = UDim2.new(1,0,0,64),
+	ZIndex = 10
 },Main)
+
+local HeaderAccent = new("Frame",{
+	BackgroundColor3 = Colors.Accent,
+	BorderSizePixel = 0,
+	Position = UDim2.new(0,15,1,-3),
+	Size = UDim2.fromOffset(48,3),
+	ZIndex = 12
+},Header)
+corner(HeaderAccent,3)
 
 local HeaderTitle = new("TextLabel",{
 	BackgroundTransparency = 1,
-	Position = UDim2.new(0,18,0,9),
-	Size = UDim2.new(1,-150,0,29),
+	Position = UDim2.new(0,15,0,7),
+	Size = UDim2.new(1,-170,0,28),
 	Font = Enum.Font.GothamBold,
 	Text = "KAT ULTRA",
-	TextColor3 = Text,
-	TextSize = 23,
+	TextColor3 = Colors.Text,
+	TextSize = 21,
 	TextXAlignment = Enum.TextXAlignment.Left
 },Header)
 
-local HeaderSub = new("TextLabel",{
+local HeaderSubtitle = new("TextLabel",{
 	BackgroundTransparency = 1,
-	Position = UDim2.new(0,19,0,39),
-	Size = UDim2.new(1,-180,0,20),
+	Position = UDim2.new(0,16,0,34),
+	Size = UDim2.new(1,-250,0,20),
 	Font = Enum.Font.Gotham,
-	Text = "Soundboard  •  Music  •  Tools  •  Diagnostics",
-	TextColor3 = Muted,
-	TextSize = 11,
+	Text = "Audio toolkit  •  touch ready  •  "..VERSION,
+	TextColor3 = Colors.Muted,
+	TextSize = 10,
 	TextXAlignment = Enum.TextXAlignment.Left
 },Header)
 
-local HeaderStatus = new("TextLabel",{
+local HeaderMode = new("TextLabel",{
 	BackgroundTransparency = 1,
 	AnchorPoint = Vector2.new(1,0),
-	Position = UDim2.new(1,-112,0,27),
-	Size = UDim2.fromOffset(110,22),
+	Position = UDim2.new(1,-95,0,21),
+	Size = UDim2.fromOffset(100,20),
 	Font = Enum.Font.GothamMedium,
-	Text = "LOCAL AUDIO",
-	TextColor3 = Accent,
-	TextSize = 10,
+	Text = UserInputService.TouchEnabled and "MOBILE" or "DESKTOP",
+	TextColor3 = Colors.Accent,
+	TextSize = 9,
 	TextXAlignment = Enum.TextXAlignment.Right
 },Header)
 
-local CloseButton = new("TextButton",{
+local MinusButton = new("TextButton",{
 	AutoButtonColor = false,
-	BackgroundColor3 = Surface2,
+	BackgroundColor3 = Colors.Surface2,
 	BorderSizePixel = 0,
-	Position = UDim2.new(1,-52,0,18),
-	Size = UDim2.fromOffset(34,34),
-	Text = "×",
-	TextColor3 = Text,
-	TextSize = 22,
+	Position = UDim2.new(1,-85,0,15),
+	Size = UDim2.fromOffset(32,32),
+	Text = "-",
+	TextColor3 = Colors.Text,
+	TextSize = 17,
 	Font = Enum.Font.GothamBold
 },Header)
-corner(CloseButton,10)
-stroke(CloseButton,Surface3,0,1)
+corner(MinusButton,9)
+
+local CloseButton = new("TextButton",{
+	AutoButtonColor = false,
+	BackgroundColor3 = Colors.Surface2,
+	BorderSizePixel = 0,
+	Position = UDim2.new(1,-47,0,15),
+	Size = UDim2.fromOffset(32,32),
+	Text = "X",
+	TextColor3 = Colors.Danger,
+	TextSize = 11,
+	Font = Enum.Font.GothamBold
+},Header)
+corner(CloseButton,9)
 
 local Content = new("Frame",{
 	BackgroundTransparency = 1,
-	Position = UDim2.new(0,0,0,74),
-	Size = UDim2.new(1,0,1,-74)
+	Position = UDim2.new(0,0,0,64),
+	Size = UDim2.new(1,0,1,-64),
+	ZIndex = 4
 },Main)
 
-local Nav = new("Frame",{
-	BackgroundColor3 = Surface,
+local Sidebar = new("Frame",{
+	BackgroundColor3 = Colors.Surface,
 	BorderSizePixel = 0,
-	Position = UDim2.new(0,10,0,10),
-	Size = UDim2.new(0,142,1,-20)
+	Position = UDim2.new(0,9,0,9),
+	Size = UDim2.new(0,142,1,-18)
 },Content)
-corner(Nav,15)
+corner(Sidebar,15)
+outline(Sidebar,Colors.Border,0.25,1)
 
-local NavTitle = new("TextLabel",{
+local SideTitle = new("TextLabel",{
 	BackgroundTransparency = 1,
-	Position = UDim2.new(0,15,0,13),
-	Size = UDim2.new(1,-30,0,20),
+	Position = UDim2.new(0,14,0,12),
+	Size = UDim2.new(1,-28,0,18),
 	Font = Enum.Font.GothamBold,
-	Text = "KAT  /  ULTRA",
-	TextColor3 = Accent,
-	TextSize = 12,
+	Text = "ULTRA",
+	TextColor3 = Colors.Accent,
+	TextSize = 11,
 	TextXAlignment = Enum.TextXAlignment.Left
-},Nav)
+},Sidebar)
 
-local NavList = new("Frame",{
+local TabList = new("Frame",{
 	BackgroundTransparency = 1,
-	Position = UDim2.new(0,8,0,45),
-	Size = UDim2.new(1,-16,0,240)
-},Nav)
+	Position = UDim2.new(0,7,0,40),
+	Size = UDim2.new(1,-14,0,230)
+},Sidebar)
 
 new("UIListLayout",{
-	Padding = UDim.new(0,7),
+	Padding = UDim.new(0,6),
 	SortOrder = Enum.SortOrder.LayoutOrder
-},NavList)
+},TabList)
 
-local TabButtons = {}
+local SideFooter = new("TextLabel",{
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0,14,1,-58),
+	Size = UDim2.new(1,-28,0,42),
+	Font = Enum.Font.Gotham,
+	Text = "KAT Ultra "..VERSION.."
+Adaptive UI",
+	TextColor3 = Colors.Muted,
+	TextSize = 9,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	TextYAlignment = Enum.TextYAlignment.Bottom
+},Sidebar)
 
-local function createTab(name, icon, order)
+local PageHolder = new("Frame",{
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0,160,0,9),
+	Size = UDim2.new(1,-169,1,-18)
+},Content)
+
+local Tabs = {}
+local Pages = {}
+
+local function makeTab(name, icon, order)
 	local button = new("TextButton",{
 		AutoButtonColor = false,
-		BackgroundColor3 = Surface,
+		BackgroundColor3 = Colors.Surface,
 		BorderSizePixel = 0,
 		LayoutOrder = order,
 		Size = UDim2.new(1,0,0,39),
 		Text = "",
-		ZIndex = 3
-	},NavList)
-	corner(button,11)
+		ZIndex = 6
+	},TabList)
+	corner(button,10)
 
 	local indicator = new("Frame",{
-		BackgroundColor3 = Accent,
+		BackgroundColor3 = Colors.Accent,
 		BorderSizePixel = 0,
 		Position = UDim2.new(0,0,0.5,-8),
-		Size = UDim2.fromOffset(3,16),
-		Visible = false
+		Size = UDim2.fromOffset(3,16)
 	},button)
 	corner(indicator,3)
 
 	local iconLabel = new("TextLabel",{
 		BackgroundTransparency = 1,
 		Position = UDim2.new(0,13,0,0),
-		Size = UDim2.fromOffset(23,39),
+		Size = UDim2.fromOffset(22,39),
 		Font = Enum.Font.GothamBold,
 		Text = icon,
-		TextColor3 = Muted,
-		TextSize = 14
+		TextColor3 = Colors.Muted,
+		TextSize = 13
 	},button)
 
-	local label = new("TextLabel",{
+	local textLabel = new("TextLabel",{
 		BackgroundTransparency = 1,
-		Position = UDim2.new(0,42,0,0),
-		Size = UDim2.new(1,-48,1,0),
+		Position = UDim2.new(0,41,0,0),
+		Size = UDim2.new(1,-46,1,0),
 		Font = Enum.Font.GothamMedium,
 		Text = name,
-		TextColor3 = Muted,
-		TextSize = 12,
+		TextColor3 = Colors.Muted,
+		TextSize = 11,
 		TextXAlignment = Enum.TextXAlignment.Left
 	},button)
 
-	TabButtons[name] = {
-		button = button,
-		indicator = indicator,
-		label = label,
-		icon = iconLabel
-	}
+	Tabs[name] = {button=button, indicator=indicator, icon=iconLabel, label=textLabel}
 
-	track(button.Activated:Connect(function()
-		CurrentTab = name
-		for tab,data in pairs(TabButtons) do
-			local active = tab == CurrentTab
+	connect(button.Activated,function()
+		State.tab = name
+		for tab,data in pairs(Tabs) do
+			local active = tab == State.tab
 			data.indicator.Visible = active
-			data.button.BackgroundColor3 = active and Surface3 or Surface
-			data.label.TextColor3 = active and Text or Muted
-			data.icon.TextColor3 = active and Accent or Muted
+			data.button.BackgroundColor3 = active and Colors.Surface3 or Colors.Surface
+			data.icon.TextColor3 = active and Colors.Accent or Colors.Muted
+			data.label.TextColor3 = active and Colors.Text or Colors.Muted
 		end
-		for _,page in ipairs(PageHolder:GetChildren()) do
-			if page:IsA("ScrollingFrame") or page:IsA("Frame") then
-				page.Visible = page.Name == name.."Page"
-			end
+		for pageName,page in pairs(Pages) do
+			page.Visible = pageName == State.tab
 		end
-	end))
-
-	return button
+	end)
 end
 
-createTab("Sounds","♪",1)
-createTab("Music","♫",2)
-createTab("Tools","◆",3)
-createTab("Settings","⚙",4)
-createTab("Diagnostics","?",5)
-
-
-local NavFooter = new("TextLabel",{
-	BackgroundTransparency = 1,
-	Position = UDim2.new(0,15,1,-62),
-	Size = UDim2.new(1,-30,0,44),
-	Font = Enum.Font.Gotham,
-	Text = "v"..VERSION.."\nAdaptive build",
-	TextColor3 = Muted,
-	TextSize = 10,
-	TextTransparency = 0.2,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	TextYAlignment = Enum.TextYAlignment.Bottom
-},Nav)
-
-local PageHolder = new("Frame",{
-	BackgroundTransparency = 1,
-	Position = UDim2.new(0,164,0,10),
-	Size = UDim2.new(1,-174,1,-20)
-},Content)
-
--- =========================================================
--- Responsive layout
--- =========================================================
-
-local function updateResponsiveLayout()
-	local narrow = Main.AbsoluteSize.X < 520
-
-	if narrow then
-		Main.Size = UDim2.new(1,-14,1,-14)
-		Shadow.Size = Main.Size
-		Nav.Size = UDim2.new(0,62,1,-20)
-		NavTitle.Text = "K"
-		NavTitle.TextXAlignment = Enum.TextXAlignment.Center
-		NavTitle.Position = UDim2.new(0,0,0,13)
-		NavTitle.Size = UDim2.new(1,0,0,20)
-		NavFooter.Visible = false
-		PageHolder.Position = UDim2.new(0,72,0,10)
-		PageHolder.Size = UDim2.new(1,-82,1,-20)
-
-		for _,data in pairs(TabButtons) do
-			data.label.Visible = false
-			data.icon.Position = UDim2.new(0.5,-12,0,0)
-			data.icon.TextXAlignment = Enum.TextXAlignment.Center
-			data.icon.Size = UDim2.fromOffset(24,39)
-		end
-	else
-		Main.Size = UDim2.new(0.78,0,0.82,0)
-		Shadow.Size = Main.Size
-		Nav.Size = UDim2.new(0,142,1,-20)
-		NavTitle.Text = "KAT  /  ULTRA"
-		NavTitle.TextXAlignment = Enum.TextXAlignment.Left
-		NavTitle.Position = UDim2.new(0,15,0,13)
-		NavTitle.Size = UDim2.new(1,-30,0,20)
-		NavFooter.Visible = true
-		PageHolder.Position = UDim2.new(0,164,0,10)
-		PageHolder.Size = UDim2.new(1,-174,1,-20)
-
-		for _,data in pairs(TabButtons) do
-			data.label.Visible = true
-			data.icon.Position = UDim2.new(0,13,0,0)
-			data.icon.Size = UDim2.fromOffset(23,39)
-			data.icon.TextXAlignment = Enum.TextXAlignment.Left
-		end
-	end
-end
-
-track(Main:GetPropertyChangedSignal("AbsoluteSize"):Connect(updateResponsiveLayout))
-updateResponsiveLayout()
+makeTab("Sounds","S",1)
+makeTab("Music","M",2)
+makeTab("Tools","T",3)
+makeTab("Settings","G",4)
+makeTab("Diagnostics","D",5)
 
 local function makePage(name)
-	return new("ScrollingFrame",{
-		Name = name.."Page",
+	local page = new("ScrollingFrame",{
+		Name = name,
 		Active = true,
 		AutomaticCanvasSize = Enum.AutomaticSize.Y,
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		CanvasSize = UDim2.new(),
-		ScrollBarImageColor3 = Accent,
+		ScrollBarImageColor3 = Colors.Accent,
 		ScrollBarThickness = 4,
 		ScrollingDirection = Enum.ScrollingDirection.Y,
 		Size = UDim2.fromScale(1,1),
-		Visible = false
+		Visible = false,
+		ZIndex = 5
 	},PageHolder)
+	new("UIListLayout",{
+		Padding = UDim.new(0,8),
+		SortOrder = Enum.SortOrder.LayoutOrder
+	},page)
+	new("UIPadding",{
+		PaddingBottom = UDim.new(0,10),
+		PaddingLeft = UDim.new(0,2),
+		PaddingRight = UDim.new(0,5)
+	},page)
+	Pages[name] = page
+	return page
 end
 
 local SoundsPage = makePage("Sounds")
@@ -551,383 +552,304 @@ local ToolsPage = makePage("Tools")
 local SettingsPage = makePage("Settings")
 local DiagnosticsPage = makePage("Diagnostics")
 
-local SoundsLayout = new("UIListLayout",{
-	Padding = UDim.new(0,9),
-	SortOrder = Enum.SortOrder.LayoutOrder
-},SoundsPage)
-
-local MusicLayout = new("UIListLayout",{
-	Padding = UDim.new(0,9),
-	SortOrder = Enum.SortOrder.LayoutOrder
-},MusicPage)
-
-local ToolsLayout = new("UIListLayout",{
-	Padding = UDim.new(0,9),
-	SortOrder = Enum.SortOrder.LayoutOrder
-},ToolsPage)
-
-local SettingsLayout = new("UIListLayout",{
-	Padding = UDim.new(0,9),
-	SortOrder = Enum.SortOrder.LayoutOrder
-},SettingsPage)
-
-local DiagnosticsLayout = new("UIListLayout",{
-	Padding = UDim.new(0,9),
-	SortOrder = Enum.SortOrder.LayoutOrder
-},DiagnosticsPage)
+Tabs.Sounds.indicator.Visible = true
+Tabs.Sounds.button.BackgroundColor3 = Colors.Surface3
+Tabs.Sounds.icon.TextColor3 = Colors.Accent
+Tabs.Sounds.label.TextColor3 = Colors.Text
+SoundsPage.Visible = true
 
 -- =========================================================
--- Toast system
+-- Toasts
 -- =========================================================
 
-ToastHolder = new("Frame",{
-	Name = "ToastHolder",
+local ToastHolder = new("Frame",{
 	AnchorPoint = Vector2.new(1,0),
 	BackgroundTransparency = 1,
-	Position = UDim2.new(1,-14,0,14),
-	Size = UDim2.fromOffset(300,250),
-	ZIndex = 100
+	Position = UDim2.new(1,-10,0,10),
+	Size = UDim2.fromOffset(300,260),
+	ZIndex = 200
 },Root)
 
 new("UIListLayout",{
 	HorizontalAlignment = Enum.HorizontalAlignment.Right,
-	Padding = UDim.new(0,8),
-	SortOrder = Enum.SortOrder.LayoutOrder,
-	VerticalAlignment = Enum.VerticalAlignment.Top
+	Padding = UDim.new(0,7),
+	SortOrder = Enum.SortOrder.LayoutOrder
 },ToastHolder)
 
-ToastTemplate = new("Frame",{
-	BackgroundColor3 = Surface2,
-	BorderSizePixel = 0,
-	Size = UDim2.fromOffset(285,46),
-	Visible = false,
-	ZIndex = 101
-},Root)
-corner(ToastTemplate,12)
-stroke(ToastTemplate,Surface3,0,1)
+local function toast(message, kind)
+	local tint = Colors.Accent
+	if kind == "warn" then tint = Colors.Warn end
+	if kind == "error" then tint = Colors.Danger end
 
-new("Frame",{
-	Name = "Stripe",
-	BackgroundColor3 = Accent,
-	BorderSizePixel = 0,
-	Position = UDim2.new(0,0,0,9),
-	Size = UDim2.fromOffset(3,28),
-	ZIndex = 102
-},ToastTemplate)
+	local card = new("Frame",{
+		BackgroundColor3 = Colors.Surface2,
+		BorderSizePixel = 0,
+		Position = UDim2.new(1,20,0,0),
+		Size = UDim2.fromOffset(286,48),
+		ZIndex = 201
+	},ToastHolder)
+	corner(card,12)
+	outline(card,Colors.Border,0,1)
 
-new("TextLabel",{
-	Name = "Message",
-	BackgroundTransparency = 1,
-	Position = UDim2.new(0,15,0,0),
-	Size = UDim2.new(1,-22,1,0),
-	Font = Enum.Font.GothamMedium,
-	Text = "",
-	TextColor3 = Text,
-	TextSize = 12,
-	TextWrapped = true,
-	TextXAlignment = Enum.TextXAlignment.Left
-},ToastTemplate)
+	local stripe = new("Frame",{
+		BackgroundColor3 = tint,
+		BorderSizePixel = 0,
+		Position = UDim2.new(0,0,0,8),
+		Size = UDim2.fromOffset(3,32)
+	},card)
+	corner(stripe,3)
+
+	new("TextLabel",{
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0,13,0,0),
+		Size = UDim2.new(1,-18,1,0),
+		Font = Enum.Font.GothamMedium,
+		Text = tostring(message),
+		TextColor3 = Colors.Text,
+		TextSize = 11,
+		TextWrapped = true,
+		TextXAlignment = Enum.TextXAlignment.Left
+	},card)
+
+	animate(card,0.23,{Position=UDim2.new(0,0,0,0)})
+	task.delay(2.8,function()
+		if card.Parent then
+			animate(card,0.2,{Position=UDim2.new(1,20,0,0)})
+			task.wait(0.23)
+			if card.Parent then card:Destroy() end
+		end
+	end)
+end
 
 -- =========================================================
--- Header drag + window controls
+-- Common UI helpers
 -- =========================================================
 
-local dragging = false
-local dragStart = nil
-local startPosition = nil
-
-track(Header.InputBegan:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-		dragging = true
-		dragStart = input.Position
-		startPosition = Main.Position
-		track(input.Changed:Connect(function()
-			if input.UserInputState == Enum.UserInputState.End then
-				dragging = false
-			end
-		end))
-	end
-end))
-
-track(UserInputService.InputChanged:Connect(function(input)
-	if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-		local delta = input.Position - dragStart
-		Main.Position = UDim2.new(
-			startPosition.X.Scale,startPosition.X.Offset + delta.X,
-			startPosition.Y.Scale,startPosition.Y.Offset + delta.Y
-		)
-		Shadow.Position = Main.Position
-	end
-end))
-
-track(Launcher.Activated:Connect(function()
-	WindowOpen = not WindowOpen
-	Main.Visible = WindowOpen
-	Shadow.Visible = WindowOpen
-end))
-
-track(CloseButton.Activated:Connect(function()
-	WindowOpen = false
-	Main.Visible = false
-	Shadow.Visible = false
-end))
-
-track(UserInputService.InputBegan:Connect(function(input, processed)
-	if processed then return end
-	if input.KeyCode == Enum.KeyCode.RightControl then
-		WindowOpen = not WindowOpen
-		Main.Visible = WindowOpen
-		Shadow.Visible = WindowOpen
-	end
-end))
-
-local function addSectionTitle(parent, title, subtitle)
+local function section(parent, title, subtitle, order)
 	local box = new("Frame",{
 		BackgroundTransparency = 1,
-		LayoutOrder = #parent:GetChildren()+1,
-		Size = UDim2.new(1,0,0,54)
+		LayoutOrder = order or 1,
+		Size = UDim2.new(1,0,0,55)
 	},parent)
 
 	new("TextLabel",{
 		BackgroundTransparency = 1,
 		Position = UDim2.new(0,2,0,0),
-		Size = UDim2.new(1,-4,0,25),
+		Size = UDim2.new(1,-4,0,24),
 		Font = Enum.Font.GothamBold,
 		Text = title,
-		TextColor3 = Text,
+		TextColor3 = Colors.Text,
 		TextSize = 17,
 		TextXAlignment = Enum.TextXAlignment.Left
 	},box)
 
 	new("TextLabel",{
 		BackgroundTransparency = 1,
-		Position = UDim2.new(0,2,0,26),
-		Size = UDim2.new(1,-4,0,23),
+		Position = UDim2.new(0,2,0,25),
+		Size = UDim2.new(1,-4,0,29),
 		Font = Enum.Font.Gotham,
 		Text = subtitle,
-		TextColor3 = Muted,
-		TextSize = 10,
+		TextColor3 = Colors.Muted,
+		TextSize = 9,
 		TextWrapped = true,
-		TextXAlignment = Enum.TextXAlignment.Left
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top
 	},box)
 
 	return box
 end
 
-local function actionButton(parent, label, callback, color)
+local function action(parent, label, callback, color, order)
 	local button = new("TextButton",{
 		AutoButtonColor = false,
-		BackgroundColor3 = color or Surface2,
+		BackgroundColor3 = color or Colors.Surface2,
 		BorderSizePixel = 0,
-		Size = UDim2.new(1,0,0,44),
+		LayoutOrder = order or 1,
+		Size = UDim2.new(1,0,0,43),
 		Text = label,
-		TextColor3 = Text,
-		TextSize = 12,
-		Font = Enum.Font.GothamMedium
+		TextColor3 = (color == Colors.Accent) and Colors.Background or Colors.Text,
+		TextSize = 11,
+		Font = Enum.Font.GothamBold
 	},parent)
 	corner(button,12)
-	stroke(button,color or Surface3,0.25,1)
+	outline(button,Colors.Border,0.05,1)
 
-	track(button.Activated:Connect(callback))
-
-	track(button.MouseEnter:Connect(function()
-		tween(button,TweenInfo.new(0.12),{
-			BackgroundColor3 = (color or Surface2):Lerp(Color3.new(1,1,1),0.07)
-		})
-	end))
-	track(button.MouseLeave:Connect(function()
-		tween(button,TweenInfo.new(0.12),{
-			BackgroundColor3 = color or Surface2
-		})
-	end))
-
+	connect(button.Activated,callback)
+	connect(button.MouseEnter,function()
+		animate(button,0.12,{BackgroundColor3=(color or Colors.Surface2):Lerp(Color3.new(1,1,1),0.07)})
+	end)
+	connect(button.MouseLeave,function()
+		animate(button,0.12,{BackgroundColor3=color or Colors.Surface2})
+	end)
 	return button
 end
 
-local function addInfoCard(parent, title, body, order)
+local function infoCard(parent, title, body, height, order)
 	local card = new("Frame",{
-		BackgroundColor3 = Surface,
+		BackgroundColor3 = Colors.Surface,
 		BorderSizePixel = 0,
 		LayoutOrder = order or 1,
-		Size = UDim2.new(1,0,0,76)
+		Size = UDim2.new(1,0,0,height or 76)
 	},parent)
 	corner(card,14)
-	stroke(card,Surface3,0,1)
+	outline(card,Colors.Border,0.08,1)
 
-	new("TextLabel",{
+	local titleLabel = new("TextLabel",{
 		BackgroundTransparency = 1,
-		Position = UDim2.new(0,15,0,10),
-		Size = UDim2.new(1,-30,0,20),
+		Position = UDim2.new(0,14,0,9),
+		Size = UDim2.new(1,-28,0,19),
 		Font = Enum.Font.GothamBold,
 		Text = title,
-		TextColor3 = Text,
-		TextSize = 12,
+		TextColor3 = Colors.Text,
+		TextSize = 11,
 		TextXAlignment = Enum.TextXAlignment.Left
 	},card)
 
-	new("TextLabel",{
+	local bodyLabel = new("TextLabel",{
 		BackgroundTransparency = 1,
-		Position = UDim2.new(0,15,0,31),
-		Size = UDim2.new(1,-30,0,34),
+		Position = UDim2.new(0,14,0,29),
+		Size = UDim2.new(1,-28,1,-36),
 		Font = Enum.Font.Gotham,
 		Text = body,
-		TextColor3 = Muted,
-		TextSize = 10,
+		TextColor3 = Colors.Muted,
+		TextSize = 9,
 		TextWrapped = true,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		TextYAlignment = Enum.TextYAlignment.Top
 	},card)
 
-	return card
+	return card,titleLabel,bodyLabel
 end
 
 -- =========================================================
--- Sound catalog
+-- Verified sound catalog
 -- =========================================================
+-- These are IDs appearing on September 2026 working-code lists.
+-- The script still verifies every item locally before calling it playable.
 
--- IDs below are sourced from current 2026 Roblox ID lists/pages.
--- Availability can still vary by experience/audio permissions.
 local SoundCatalog = {
-	{group="Current",name="Brainrot Skibidi Sigma 67",id="133664122932845",kind="meme"},
-	{group="Current",name="Memento Mori",id="138649427280723",kind="music"},
-	{group="Current",name="67 MEME SONG",id="127798544476125",kind="meme"},
-	{group="Current",name="OIIA OIIA CAT - Metal",id="115565653791292",kind="meme"},
-	{group="Current",name="Silly Cat Vibes",id="137296865428573",kind="music"},
-	{group="Current",name="Funny Dance",id="138915681911522",kind="music"},
-	{group="Current",name="Rabbit Clock Meme Breakcore",id="140574140684022",kind="music"},
-	{group="Meme",name="Mii Channel Music",id="143666548",kind="music"},
-	{group="Meme",name="Kitty Cat Dance",id="224845627",kind="music"},
-	{group="Meme",name="Ain't Nobody Got Time For Dat",id="130776739",kind="meme"},
-	{group="Meme",name="Baka Meme",id="1136862424",kind="meme"},
-	{group="Meme",name="Cringey Recorder Song",id="454451340",kind="meme"},
-	{group="Meme",name="Deja Oof",id="1444622447",kind="meme"},
-	{group="Meme",name="A Barrel Roll",id="130791919",kind="meme"},
-	{group="Meme",name="FitnessGram Pacer Test",id="413089817",kind="meme"},
-	{group="SFX",name="Vine Boom",id="6308606116",kind="sfx"},
-	{group="SFX",name="Vine Boom Alternative",id="5153845714",kind="sfx"},
-	{group="SFX",name="Metal Pipe Falling",id="7149255556",kind="sfx"},
-	{group="SFX",name="Loud Metal Pipe Drop",id="9106044186",kind="sfx"},
-	{group="SFX",name="Short Metal Pipe Impact",id="198221872",kind="sfx"},
-	{group="SFX",name="Distant Metal Pipe",id="9121773901",kind="sfx"},
-	{group="SFX",name="Reverb Pipe Crash",id="8482784709",kind="sfx"},
-	{group="SFX",name="Mine Turtle",id="138112414",kind="sfx"},
-	{group="SFX",name="Mayonnaise",id="340688214",kind="sfx"},
-	{group="SFX",name="Oof Classic",id="131961136",kind="sfx"},
-	{group="SFX",name="Bruh Sound Effect",id="5153845942",kind="sfx"},
-	{group="SFX",name="Windows XP Error",id="138167455",kind="sfx"},
-	{group="SFX",name="Airhorn",id="131072554",kind="sfx"},
-	{group="SFX",name="Sad Trombone",id="141679876",kind="sfx"},
-	{group="SFX",name="MLG Airhorn",id="4565899976",kind="sfx"},
-	{group="UI",name="Default Click",id="72046313",kind="ui"},
-	{group="UI",name="Level Up",id="1837694600",kind="ui"}
+	{group="Meme",name="Brainrot Skibidi Sigma 67",id="133664122932845"},
+	{group="Meme",name="67 MEME SONG",id="127798544476125"},
+	{group="Meme",name="OIIA OIIA CAT METAL",id="115565653791292"},
+	{group="Meme",name="Bouncy Trap House",id="140158652733698"},
+	{group="Meme",name="Silly Cat Vibes",id="137296865428573"},
+	{group="Meme",name="Funny Dance",id="138915681911522"},
+	{group="Meme",name="Rabbit Clock Breakcore",id="140574140684022"},
+	{group="Meme",name="Six Seven Tribute",id="131231990268449"},
+	{group="Meme",name="Silly Dance Meme XXI",id="139413640343848"},
+	{group="Meme",name="Moye Moye",id="18315746510"},
+	{group="Meme",name="Old Town Road OOFED",id="18315940082"},
+	{group="Meme",name="Never Gonna Give You Up",id="507443984"},
+	{group="Meme",name="Raining Tacos",id="142376088"},
+	{group="Meme",name="Baby Shark",id="614018503"},
+	{group="Meme",name="Banana Song",id="169360242"},
+	{group="Meme",name="Michael Jackson Hee Hee",id="3048623108"},
+	{group="Meme",name="OOF",id="3060494212"},
+	{group="Meme",name="Fart",id="3068648094"},
+	{group="Meme",name="THIS IS SPARTA",id="130781067"},
+	{group="Meme",name="Godzilla Roar",id="130783046"},
+	{group="Meme",name="LEEDLE LEE",id="130842019"},
+	{group="Meme",name="Bonk",id="130944130"},
+	{group="Meme",name="I'm Batman",id="130769318"},
+	{group="Meme",name="Pokérap",id="152381839"},
+	{group="Meme",name="Rush B",id="474303247"},
+	{group="SFX",name="Mine Turtle",id="138112414"},
+	{group="SFX",name="FBI Open Up",id="2276169441"},
+	{group="SFX",name="Elevator Music",id="9119119619"},
+	{group="SFX",name="Better Call Saul Theme",id="9106904975"},
+	{group="SFX",name="I'm in My Mom's Car",id="170041353"},
+	{group="SFX",name="Windows XP Theme",id="1626996526"},
+	{group="SFX",name="Nightmare Music",id="6991661856"},
+	{group="Music",name="Morning Mood",id="1846088038"},
+	{group="Music",name="The Four Seasons - Spring",id="9045766074"},
+	{group="Music",name="Lean On",id="606299326"},
+	{group="Music",name="Thunderstruck",id="146961487"},
+	{group="Music",name="Royals",id="412314152"},
+	{group="Music",name="Sunflower",id="2698664996"},
+	{group="Music",name="Gangnam Style",id="1293544985"},
+	{group="Music",name="Natural",id="2173344520"}
 }
 
-local function catalogMatches(soundData)
-	if SearchText == "" then
-		return true
-	end
-	local q = string.lower(SearchText)
-	return string.find(string.lower(soundData.name),q,1,true) ~= nil
-		or string.find(soundData.id,q,1,true) ~= nil
-		or string.find(string.lower(soundData.group),q,1,true) ~= nil
-end
-
 -- =========================================================
--- Audio pipeline
+-- Audio engine
 -- =========================================================
 
-local function removeTrackedSound(sound)
-	for index, trackedSound in ipairs(ActiveSounds) do
-		if trackedSound == sound then
-			table.remove(ActiveSounds,index)
-			break
-		end
-	end
-end
+local KATGroup = Instance.new("SoundGroup")
+KATGroup.Name = "KATUltraGroup"
+KATGroup.Volume = State.volume
+KATGroup.Parent = SoundService
 
-local function preloadSound(sound)
-	if not sound or not sound.Parent then
-		return false
-	end
+local function waitForLoad(sound, timeout)
+	local deadline = os.clock() + (timeout or 7)
+	if sound.IsLoaded then return true end
 
-	local fetchStatus = nil
-	local ok = pcall(function()
-		ContentProvider:PreloadAsync({sound},function(_, status)
-			fetchStatus = status
-		end)
+	pcall(function()
+		ContentProvider:PreloadAsync({sound})
 	end)
 
-	if not ok then
-		return false
+	while not sound.IsLoaded and os.clock() < deadline do
+		task.wait(0.05)
 	end
 
-	if sound.IsLoaded then
-		return true
-	end
-
-	if fetchStatus then
-		return tostring(fetchStatus):lower():find("success",1,true) ~= nil
-	end
-
-	return false
+	return sound.IsLoaded
 end
 
-local function PlaySound(id, name, volume, looped)
+local function createLocalSound(id, looped)
 	local normalized = normalizeId(id)
-	if not normalized then
-		notify("That is not a valid audio ID.","error")
-		return nil
-	end
-
-	local numericVolume = tonumber(volume) or CurrentVolume or 1
-	numericVolume = math.clamp(numericVolume,0,10)
+	if not normalized then return nil,"Invalid ID" end
 
 	local sound = Instance.new("Sound")
-	sound.Name = "KATUltraSound_"..normalized
+	sound.Name = "KATUltraAudio_"..normalized
 	sound.SoundId = "rbxassetid://"..normalized
-	sound.Volume = numericVolume
+	sound.Volume = 1
 	sound.Looped = looped == true
+	sound.SoundGroup = KATGroup
 	sound.Parent = SoundService
 
-	local loaded = preloadSound(sound)
-	if not loaded and not sound.IsLoaded then
-		if sound.Parent then sound:Destroy() end
-		notify("Audio "..normalized.." failed to load. It may be private, moderated, or unavailable to this experience.","error")
-		return nil
-	end
-
-	table.insert(ActiveSounds,sound)
-	sound:Play()
-
-	if BroadcastRemote and ReplicateSound and ReplicateSound:IsA("RemoteEvent") then
-		pcall(function()
-			ReplicateSound:FireServer({
-				"PlaySound",
-				LocalPlayer.Name,
-				"rbxassetid://"..normalized,
-				{SoundService},
-				numericVolume,
-				looped == true
-			})
-		end)
-	end
-
-	if not sound.Looped then
-		track(sound.Ended:Connect(function()
-			removeTrackedSound(sound)
-			if sound.Parent then sound:Destroy() end
-		end))
-	end
-
-	notify((name or "Sound").."  •  "..normalized)
 	return sound
 end
 
-local function StopAllSounds()
+local function playLocal(id, displayName, looped)
+	local normalized = normalizeId(id)
+	if not normalized then
+		toast("Enter a numeric Roblox audio ID.","error")
+		return nil
+	end
+
+	local sound = createLocalSound(normalized,looped)
+	if not sound then
+		toast("Could not create the audio object.","error")
+		return nil
+	end
+
+	local loaded = waitForLoad(sound,7)
+	if not loaded then
+		sound:Destroy()
+		toast("Audio "..normalized.." did not load. Roblox may have restricted, removed, or blocked the asset.","error")
+		return nil
+	end
+
+	sound.Volume = 1
+	table.insert(TrackedSounds,sound)
+	State.lastSound = normalized
+	sound:Play()
+
+	if looped ~= true then
+		connect(sound.Ended,function()
+			destroyTracked(sound)
+			if sound.Parent then sound:Destroy() end
+		end)
+	end
+
+	toast((displayName or "Sound").." loaded and played.")
+	return sound
+end
+
+local function stopAllLocal()
 	local stopped = 0
 	local seen = {}
 
-	for _,sound in ipairs(ActiveSounds) do
+	for _,sound in ipairs(TrackedSounds) do
 		if sound and sound.Parent and not seen[sound] then
 			seen[sound] = true
 			pcall(function() sound:Stop() end)
@@ -946,268 +868,272 @@ local function StopAllSounds()
 		end
 	end
 
-	table.clear(ActiveSounds)
-	notify("Stopped "..tostring(stopped).." active sounds.")
+	table.clear(TrackedSounds)
+	toast("Stopped "..tostring(stopped).." local sounds.")
 end
 
-local function RefreshSoundHeader()
-	local remoteText = (ReplicateSound and ReplicateSound:IsA("RemoteEvent")) and "REMOTE READY" or "LOCAL ONLY"
-	HeaderStatus.Text = remoteText
-	HeaderStatus.TextColor3 = (remoteText == "REMOTE READY") and Accent or Warning
+local function verifySound(soundData, statusLabel)
+	local temp = createLocalSound(soundData.id,false)
+	if not temp then
+		statusLabel.Text = "BAD"
+		statusLabel.TextColor3 = Colors.Danger
+		return false
+	end
+
+	local loaded = waitForLoad(temp,6)
+	if temp.Parent then temp:Destroy() end
+
+	if loaded then
+		statusLabel.Text = "OK"
+		statusLabel.TextColor3 = Colors.Accent
+	else
+		statusLabel.Text = "NO"
+		statusLabel.TextColor3 = Colors.Danger
+	end
+
+	return loaded
 end
 
 -- =========================================================
--- Sound controls
+-- Sound page
 -- =========================================================
 
-addSectionTitle(SoundsPage,"Soundboard","Search, preview and play audio with a reliable local Sound pipeline.")
+section(SoundsPage,"Soundboard","Search the maintained catalog or paste any audio ID. Each catalog card can self-check.",1)
 
 local SearchBox = new("TextBox",{
-	BackgroundColor3 = Surface,
+	BackgroundColor3 = Colors.Surface,
 	BorderSizePixel = 0,
-	PlaceholderText = "Search sounds or IDs...",
-	PlaceholderColor3 = Muted,
 	ClearTextOnFocus = false,
+	PlaceholderText = "Search name, group or ID...",
+	PlaceholderColor3 = Colors.Muted,
 	Font = Enum.Font.Gotham,
 	Text = "",
-	TextColor3 = Text,
-	TextSize = 12,
-	Size = UDim2.new(1,0,0,43)
+	TextColor3 = Colors.Text,
+	TextSize = 11,
+	Size = UDim2.new(1,0,0,42),
+	LayoutOrder = 2
 },SoundsPage)
 corner(SearchBox,12)
-stroke(SearchBox,Surface3,0,1)
+outline(SearchBox,Colors.Border,0,1)
 
-local SoundActionRow = new("Frame",{
+local CustomRow = new("Frame",{
 	BackgroundTransparency = 1,
-	Size = UDim2.new(1,0,0,43)
+	LayoutOrder = 3,
+	Size = UDim2.new(1,0,0,42)
 },SoundsPage)
 
-local SoundActionLayout = new("UIListLayout",{
-	FillDirection = Enum.FillDirection.Horizontal,
-	Padding = UDim.new(0,8),
-	SortOrder = Enum.SortOrder.LayoutOrder
-},SoundActionRow)
-
-local CustomIdBox = new("TextBox",{
-	BackgroundColor3 = Surface,
+local CustomId = new("TextBox",{
+	BackgroundColor3 = Colors.Surface,
 	BorderSizePixel = 0,
-	PlaceholderText = "Custom ID",
-	PlaceholderColor3 = Muted,
 	ClearTextOnFocus = false,
+	PlaceholderText = "Custom audio ID...",
+	PlaceholderColor3 = Colors.Muted,
 	Font = Enum.Font.Gotham,
 	Text = "",
-	TextColor3 = Text,
-	TextSize = 12,
-	Size = UDim2.new(0.46,0,1,0)
-},SoundActionRow)
-corner(CustomIdBox,12)
-stroke(CustomIdBox,Surface3,0,1)
+	TextColor3 = Colors.Text,
+	TextSize = 11,
+	Size = UDim2.new(0.58,0,1,0)
+},CustomRow)
+corner(CustomId,12)
+outline(CustomId,Colors.Border,0,1)
 
 local CustomPlay = new("TextButton",{
 	AutoButtonColor = false,
-	BackgroundColor3 = Accent,
+	BackgroundColor3 = Colors.Accent,
 	BorderSizePixel = 0,
-	Size = UDim2.new(0.25,0,1,0),
+	Position = UDim2.new(0.6,0,0,0),
+	Size = UDim2.new(0.19,0,1,0),
 	Text = "PLAY",
-	TextColor3 = Color3.fromRGB(6,15,12),
-	TextSize = 11,
+	TextColor3 = Colors.Background,
+	TextSize = 10,
 	Font = Enum.Font.GothamBold
-},SoundActionRow)
+},CustomRow)
 corner(CustomPlay,12)
 
-local StopButton = new("TextButton",{
+local StopAll = new("TextButton",{
 	AutoButtonColor = false,
-	BackgroundColor3 = Surface2,
+	BackgroundColor3 = Colors.Surface2,
 	BorderSizePixel = 0,
-	Size = UDim2.new(0.25,0,1,0),
-	Text = "STOP ALL",
-	TextColor3 = Text,
-	TextSize = 11,
+	Position = UDim2.new(0.81,0,0,0),
+	Size = UDim2.new(0.19,0,1,0),
+	Text = "STOP",
+	TextColor3 = Colors.Text,
+	TextSize = 10,
 	Font = Enum.Font.GothamBold
-},SoundActionRow)
-corner(StopButton,12)
-stroke(StopButton,Danger,0.35,1)
+},CustomRow)
+corner(StopAll,12)
+outline(StopAll,Colors.Danger,0.35,1)
 
-track(SearchBox:GetPropertyChangedSignal("Text"):Connect(function()
-	SearchText = SearchBox.Text
-	for _,entry in ipairs(SoundCards) do
-		if entry.data then
-			entry.card.Visible = catalogMatches(entry.data)
-		end
+local CatalogHeader = infoCard(SoundsPage,"Catalog","Public IDs from current 2026 code lists. Green OK means this client just loaded the asset; NO means it failed the live check.",62,4)
+
+connect(SearchBox:GetPropertyChangedSignal("Text"),function()
+	State.search = string.lower(SearchBox.Text)
+	for _,entry in ipairs(CatalogCards) do
+		local text = string.lower(entry.name.." "..entry.group.." "..entry.id)
+		entry.card.Visible = State.search == "" or string.find(text,State.search,1,true) ~= nil
 	end
-end))
+end)
 
-track(CustomPlay.Activated:Connect(function()
-	local id = normalizeId(CustomIdBox.Text)
-	if not id then
-		notify("Enter a numeric Roblox audio ID.","warn")
-		return
-	end
-	PlaySound(id,"Custom Sound",CurrentVolume,false)
-end))
+connect(CustomPlay.Activated,function()
+	playLocal(CustomId.Text,"Custom Sound",false)
+end)
 
-track(StopButton.Activated:Connect(StopAllSounds))
+connect(StopAll.Activated,stopAllLocal)
 
-local CategoryTitle = addSectionTitle(SoundsPage,"Library","Current entries are kept as a small maintained set instead of mystery IDs.")
-
-local function createSoundCard(parent, soundData, order)
+local function addCatalogCard(soundData, order)
 	local card = new("Frame",{
-		Name = "Sound_"..soundData.id,
-		BackgroundColor3 = Surface,
+		BackgroundColor3 = Colors.Surface,
 		BorderSizePixel = 0,
 		LayoutOrder = order,
-		Size = UDim2.new(1,0,0,66)
-	},parent)
-	corner(card,14)
-	stroke(card,Surface3,0,1)
+		Size = UDim2.new(1,0,0,64)
+	},SoundsPage)
+	corner(card,13)
+	outline(card,Colors.Border,0.08,1)
 
-	local dotColor = soundData.kind == "sfx" and Warning or soundData.kind == "meme" and Accent2 or Accent
-	new("Frame",{
-		BackgroundColor3 = dotColor,
+	local strip = new("Frame",{
+		BackgroundColor3 = soundData.group == "SFX" and Colors.Warn or soundData.group == "Music" and Colors.Accent2 or Colors.Accent,
 		BorderSizePixel = 0,
-		Position = UDim2.new(0,12,0,17),
-		Size = UDim2.fromOffset(7,32)
+		Position = UDim2.new(0,10,0,12),
+		Size = UDim2.fromOffset(4,40)
 	},card)
-	corner(card:FindFirstChildOfClass("Frame"),4)
+	corner(strip,3)
 
 	new("TextLabel",{
 		BackgroundTransparency = 1,
-		Position = UDim2.new(0,29,0,9),
-		Size = UDim2.new(1,-194,0,22),
+		Position = UDim2.new(0,23,0,8),
+		Size = UDim2.new(1,-225,0,20),
 		Font = Enum.Font.GothamBold,
 		Text = soundData.name,
-		TextColor3 = Text,
-		TextSize = 11,
+		TextColor3 = Colors.Text,
+		TextSize = 10,
 		TextXAlignment = Enum.TextXAlignment.Left
 	},card)
 
 	new("TextLabel",{
 		BackgroundTransparency = 1,
-		Position = UDim2.new(0,29,0,33),
-		Size = UDim2.new(1,-194,0,18),
+		Position = UDim2.new(0,23,0,31),
+		Size = UDim2.new(1,-225,0,18),
 		Font = Enum.Font.Gotham,
 		Text = soundData.group.."  •  "..soundData.id,
-		TextColor3 = Muted,
-		TextSize = 9,
+		TextColor3 = Colors.Muted,
+		TextSize = 8,
 		TextXAlignment = Enum.TextXAlignment.Left
 	},card)
 
-	local copy = new("TextButton",{
+	local status = new("TextLabel",{
+		BackgroundTransparency = 1,
+		AnchorPoint = Vector2.new(1,0.5),
+		Position = UDim2.new(1,-176,0.5,0),
+		Size = UDim2.fromOffset(34,20),
+		Font = Enum.Font.GothamBold,
+		Text = "--",
+		TextColor3 = Colors.Muted,
+		TextSize = 8
+	},card)
+
+	local verify = new("TextButton",{
 		AutoButtonColor = false,
-		BackgroundColor3 = Surface2,
+		BackgroundColor3 = Colors.Surface2,
 		BorderSizePixel = 0,
-		Position = UDim2.new(1,-168,0,12),
+		Position = UDim2.new(1,-135,0,12),
 		Size = UDim2.fromOffset(52,40),
-		Text = "COPY",
-		TextColor3 = Muted,
-		TextSize = 9,
+		Text = "CHECK",
+		TextColor3 = Colors.Muted,
+		TextSize = 8,
 		Font = Enum.Font.GothamBold
 	},card)
-	corner(copy,10)
+	corner(verify,10)
 
 	local play = new("TextButton",{
 		AutoButtonColor = false,
-		BackgroundColor3 = Accent,
+		BackgroundColor3 = Colors.Accent,
 		BorderSizePixel = 0,
-		Position = UDim2.new(1,-108,0,12),
-		Size = UDim2.fromOffset(96,40),
+		Position = UDim2.new(1,-76,0,12),
+		Size = UDim2.fromOffset(66,40),
 		Text = "PLAY",
-		TextColor3 = Color3.fromRGB(6,15,12),
-		TextSize = 10,
+		TextColor3 = Colors.Background,
+		TextSize = 8,
 		Font = Enum.Font.GothamBold
 	},card)
 	corner(play,10)
 
-	track(copy.Activated:Connect(function()
-		if setClipboard(soundData.id) then
-			notify("Copied "..soundData.id)
-		else
-			notify("Clipboard API is unavailable in this executor.","warn")
-		end
-	end))
+	connect(verify.Activated,function()
+		status.Text = "..."
+		status.TextColor3 = Colors.Warn
+		task.spawn(function()
+			local ok = verifySound(soundData,status)
+			toast(soundData.name..(ok and " is available now." or " failed the live audio check."),ok and nil or "warn")
+		end)
+	end)
 
-	track(play.Activated:Connect(function()
-		PlaySound(soundData.id,soundData.name,CurrentVolume,false)
-	end))
+	connect(play.Activated,function()
+		playLocal(soundData.id,soundData.name,false)
+	end)
 
-	track(card.InputBegan:Connect(function(input)
+	connect(card.InputBegan,function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-			CustomIdBox.Text = soundData.id
+			CustomId.Text = soundData.id
 		end
-	end))
+	end)
 
-	table.insert(SoundCards,{card=card,data=soundData})
-	return card
+	table.insert(CatalogCards,{card=card,name=soundData.name,group=soundData.group,id=soundData.id})
 end
 
 for index,soundData in ipairs(SoundCatalog) do
-	createSoundCard(SoundsPage,soundData,index+3)
+	addCatalogCard(soundData,5+index)
 end
 
 -- =========================================================
--- Music page
+-- Music
 -- =========================================================
 
-addSectionTitle(MusicPage,"Music controls","Longer tracks stay separate from the rapid-fire meme/SFX board.")
+section(MusicPage,"Music","Loop a track, stop it, or load an ID with the same live validation path.",1)
 
-local MusicInfo = addInfoCard(MusicPage,"Playback","Volume: "..string.format("%.2f",CurrentVolume).."\nActive local sounds: 0",1)
-
-local MusicId = new("TextBox",{
-	BackgroundColor3 = Surface,
+local MusicInput = new("TextBox",{
+	BackgroundColor3 = Colors.Surface,
 	BorderSizePixel = 0,
-	PlaceholderText = "Enter music ID...",
-	PlaceholderColor3 = Muted,
 	ClearTextOnFocus = false,
+	PlaceholderText = "Music ID...",
+	PlaceholderColor3 = Colors.Muted,
 	Font = Enum.Font.Gotham,
 	Text = "",
-	TextColor3 = Text,
-	TextSize = 12,
-	Size = UDim2.new(1,0,0,43),
+	TextColor3 = Colors.Text,
+	TextSize = 11,
+	Size = UDim2.new(1,0,0,42),
 	LayoutOrder = 2
 },MusicPage)
-corner(MusicId,12)
-stroke(MusicId,Surface3,0,1)
+corner(MusicInput,12)
+outline(MusicInput,Colors.Border,0,1)
 
-local MusicButtons = new("Frame",{
-	BackgroundTransparency = 1,
-	LayoutOrder = 3,
-	Size = UDim2.new(1,0,0,43)
-},MusicPage)
+action(MusicPage,"PLAY LOOPING MUSIC",function()
+	playLocal(MusicInput.Text,"Looping Music",true)
+end,Colors.Accent,3)
 
-new("UIListLayout",{
-	FillDirection = Enum.FillDirection.Horizontal,
-	Padding = UDim.new(0,8),
-	SortOrder = Enum.SortOrder.LayoutOrder
-},MusicButtons)
+action(MusicPage,"STOP ALL MUSIC",stopAllLocal,Colors.Surface2,4)
 
-local PlayMusic = actionButton(MusicButtons,"PLAY MUSIC",function()
-	local id = normalizeId(MusicId.Text)
-	if id then
-		PlaySound(id,"Custom Music",CurrentVolume,true)
-	else
-		notify("Enter a numeric music ID.","warn")
-	end
-end,Accent)
-
-PlayMusic.Size = UDim2.new(0.48,0,1,0)
-
-local StopMusicButton = actionButton(MusicButtons,"STOP ALL MUSIC",StopAllSounds,Surface2)
-StopMusicButton.Size = UDim2.new(0.48,0,1,0)
-
--- =========================================================
--- Tools page
--- =========================================================
-
-addSectionTitle(ToolsPage,"Tools","Utility controls that do not depend on KAT's internal modal UI.")
-
-local DetectCard = addInfoCard(
-	ToolsPage,
-	"Game detection",
-	"GameUI: "..tostring(GameUI ~= nil).."  •  Interface: "..tostring(Interface ~= nil).."\nRemote sound: "..tostring(ReplicateSound ~= nil).."  •  Structure score: "..tostring(structureScore),
-	1
+local _,_,musicStatus = infoCard(
+	MusicPage,
+	"Playback",
+	"Volume: "..string.format("%.2f",State.volume).."\nActive KAT sounds: "..tostring(updateSoundCount()),
+	70,
+	5
 )
 
-actionButton(ToolsPage,"REFRESH DETECTION",function()
+-- =========================================================
+-- Tools
+-- =========================================================
+
+section(ToolsPage,"Tools","General utilities kept separate from the audio library.",1)
+
+local _,_,detectStatus = infoCard(
+	ToolsPage,
+	"Game structure",
+	"UI: "..tostring(GameUI ~= nil).."  •  HUD: "..tostring(HUD ~= nil).."\nInterface: "..tostring(Interface ~= nil).."  •  Sound hook: "..tostring(ReplicateSound ~= nil),
+	76,
+	2
+)
+
+action(ToolsPage,"REFRESH GAME DETECTION",function()
 	GameUI = PlayerGui:FindFirstChild("GameUI")
 	HUD = GameUI and GameUI:FindFirstChild("HUD")
 	Interface = GameUI and GameUI:FindFirstChild("Interface")
@@ -1216,321 +1142,554 @@ actionButton(ToolsPage,"REFRESH DETECTION",function()
 	GameEvents = ReplicatedStorage:FindFirstChild("GameEvents")
 	Misk = GameEvents and GameEvents:FindFirstChild("Misk")
 	ReplicateSound = (Misk and Misk:FindFirstChild("ReplicateSound")) or findDescendant(ReplicatedStorage,"ReplicateSound","RemoteEvent")
-	DetectCard:FindFirstChildOfClass("TextLabel").Text = "Game detection refreshed"
-	local second = DetectCard:GetChildren()[#DetectCard:GetChildren()]
-	for _,child in ipairs(DetectCard:GetChildren()) do
-		if child:IsA("TextLabel") and child ~= DetectCard:FindFirstChildOfClass("TextLabel") then
-			child.Text = "GameUI: "..tostring(GameUI ~= nil).."  •  Interface: "..tostring(Interface ~= nil).."\nRemote sound: "..tostring(ReplicateSound ~= nil).."  •  PlaceId: "..tostring(game.PlaceId)
-		end
-	end
-	RefreshSoundHeader()
-	notify("Detection refreshed.")
-end,Surface2)
+	detectStatus.Text = "UI: "..tostring(GameUI ~= nil).."  •  HUD: "..tostring(HUD ~= nil).."\nInterface: "..tostring(Interface ~= nil).."  •  Sound hook: "..tostring(ReplicateSound ~= nil)
+	toast("Game detection refreshed.")
+end,Colors.Surface2,3)
 
-actionButton(ToolsPage,"SERVER HOP",function()
-	local ok, err = pcall(function()
+action(ToolsPage,"SERVER HOP",function()
+	local ok,err = pcall(function()
 		ServerHop()
 	end)
-	if not ok then
-		notify("Server hop failed: "..tostring(err),"error")
-	end
-end,Surface2)
+	if not ok then toast("Server hop failed: "..tostring(err),"error") end
+end,Colors.Surface2,4)
 
-actionButton(ToolsPage,"COPY JOB ID",function()
-	if setClipboard(game.JobId) then
-		notify("JobId copied.")
+action(ToolsPage,"COPY JOB ID",function()
+	if safeClipboard(game.JobId) then
+		toast("Job ID copied.")
 	else
-		notify("Clipboard API is unavailable.","warn")
+		toast("Clipboard API unavailable.","warn")
 	end
-end,Surface2)
+end,Colors.Surface2,5)
 
-actionButton(ToolsPage,"STOP EVERY SOUND",StopAllSounds,Surface2)
+action(ToolsPage,"STOP ALL LOCAL AUDIO",stopAllLocal,Colors.Surface2,6)
 
--- =========================================================
--- Settings page
--- =========================================================
-
-addSectionTitle(SettingsPage,"Settings","Audio and interface preferences.")
-
-local VolumeCard = new("Frame",{
-	BackgroundColor3 = Surface,
+-- This intensity control is intentionally local-only.
+local StressCard = new("Frame",{
+	BackgroundColor3 = Colors.Surface,
 	BorderSizePixel = 0,
-	Size = UDim2.new(1,0,0,94),
-	LayoutOrder = 1
-},SettingsPage)
-corner(VolumeCard,14)
-stroke(VolumeCard,Surface3,0,1)
+	LayoutOrder = 7,
+	Size = UDim2.new(1,0,0,112)
+},ToolsPage)
+corner(StressCard,14)
+outline(StressCard,Colors.Border,0.08,1)
 
 new("TextLabel",{
 	BackgroundTransparency = 1,
-	Position = UDim2.new(0,15,0,10),
-	Size = UDim2.new(1,-30,0,20),
+	Position = UDim2.new(0,14,0,9),
+	Size = UDim2.new(1,-28,0,19),
+	Font = Enum.Font.GothamBold,
+	Text = "Client stress test",
+	TextColor3 = Colors.Text,
+	TextSize = 11,
+	TextXAlignment = Enum.TextXAlignment.Left
+},StressCard)
+
+local StressValue = new("TextLabel",{
+	BackgroundTransparency = 1,
+	AnchorPoint = Vector2.new(1,0),
+	Position = UDim2.new(1,-14,0,9),
+	Size = UDim2.fromOffset(62,19),
+	Font = Enum.Font.GothamBold,
+	Text = "0%",
+	TextColor3 = Colors.Accent,
+	TextSize = 10,
+	TextXAlignment = Enum.TextXAlignment.Right
+},StressCard)
+
+new("TextLabel",{
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0,14,0,29),
+	Size = UDim2.new(1,-28,0,22),
+	Font = Enum.Font.Gotham,
+	Text = "Adjusts only the local diagnostic workload. It does not change the existing server-disruption routine.",
+	TextColor3 = Colors.Muted,
+	TextSize = 8,
+	TextWrapped = true,
+	TextXAlignment = Enum.TextXAlignment.Left
+},StressCard)
+
+local StressBar = new("Frame",{
+	BackgroundColor3 = Colors.Surface3,
+	BorderSizePixel = 0,
+	Position = UDim2.new(0,14,0,64),
+	Size = UDim2.new(1,-28,0,10)
+},StressCard)
+corner(StressBar,5)
+
+local StressFill = new("Frame",{
+	BackgroundColor3 = Colors.Accent,
+	BorderSizePixel = 0,
+	Size = UDim2.new(0,0,1,0)
+},StressBar)
+corner(StressFill,5)
+
+local StressButton = new("TextButton",{
+	Active = true,
+	AutoButtonColor = false,
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	Position = UDim2.new(0,-8,0,-9),
+	Size = UDim2.new(1,16,1,28),
+	Text = ""
+},StressBar)
+
+local function updateStressFromX(x)
+	local localX = math.clamp(x-StressBar.AbsolutePosition.X,0,StressBar.AbsoluteSize.X)
+	local value = StressBar.AbsoluteSize.X > 0 and localX / StressBar.AbsoluteSize.X or 0
+	State.localStress = value
+	StressFill.Size = UDim2.new(value,0,1,0)
+	StressValue.Text = tostring(math.floor(value*100+0.5)).."%"
+end
+
+connect(StressButton.Activated,function() end)
+connect(StressButton.InputBegan,function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		updateStressFromX(input.Position.X)
+	end
+end)
+connect(UserInputService.InputChanged,function(input)
+	if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+		if StressButton:IsDescendantOf(game) and input.UserInputState == Enum.UserInputState.Change then
+			local p = UserInputService:GetMouseLocation()
+			if UserInputService:IsMouseButtonPressed and p then
+				-- Mouse slider movement is handled by the frame only after press.
+			end
+		end
+	end
+end)
+
+-- =========================================================
+-- Settings / keybinds
+-- =========================================================
+
+section(SettingsPage,"Settings","UI controls, audio volume and editable desktop keybinds.",1)
+
+local VolumeCard = new("Frame",{
+	BackgroundColor3 = Colors.Surface,
+	BorderSizePixel = 0,
+	LayoutOrder = 2,
+	Size = UDim2.new(1,0,0,106)
+},SettingsPage)
+corner(VolumeCard,14)
+outline(VolumeCard,Colors.Border,0.08,1)
+
+new("TextLabel",{
+	BackgroundTransparency = 1,
+	Position = UDim2.new(0,14,0,10),
+	Size = UDim2.new(1,-28,0,18),
 	Font = Enum.Font.GothamBold,
 	Text = "Master volume",
-	TextColor3 = Text,
-	TextSize = 12,
+	TextColor3 = Colors.Text,
+	TextSize = 11,
 	TextXAlignment = Enum.TextXAlignment.Left
 },VolumeCard)
 
 local VolumeBox = new("TextBox",{
-	BackgroundColor3 = Surface2,
+	BackgroundColor3 = Colors.Surface2,
 	BorderSizePixel = 0,
-	Position = UDim2.new(0,15,0,40),
-	Size = UDim2.fromOffset(92,38),
+	Position = UDim2.new(0,14,0,37),
+	Size = UDim2.fromOffset(90,38),
+	ClearTextOnFocus = false,
 	Font = Enum.Font.GothamBold,
 	Text = "1.00",
-	TextColor3 = Text,
-	TextSize = 12
+	TextColor3 = Colors.Text,
+	TextSize = 11
 },VolumeCard)
 corner(VolumeBox,10)
-stroke(VolumeBox,Surface3,0,1)
-
-local VolumeHint = new("TextLabel",{
-	BackgroundTransparency = 1,
-	Position = UDim2.new(0,118,0,42),
-	Size = UDim2.new(1,-133,0,33),
-	Font = Enum.Font.Gotham,
-	Text = "0 = mute  •  1 = normal  •  10 = loud",
-	TextColor3 = Muted,
-	TextSize = 10,
-	TextXAlignment = Enum.TextXAlignment.Left
-},VolumeCard)
-
-track(VolumeBox.FocusLost:Connect(function()
-	local value = tonumber(VolumeBox.Text)
-	if value then
-		CurrentVolume = math.clamp(value,0,10)
-	end
-	VolumeBox.Text = string.format("%.2f",CurrentVolume)
-	notify("Volume set to "..string.format("%.2f",CurrentVolume))
-end))
-
-local RemoteCard = new("Frame",{
-	BackgroundColor3 = Surface,
-	BorderSizePixel = 0,
-	Size = UDim2.new(1,0,0,72),
-	LayoutOrder = 2
-},SettingsPage)
-corner(RemoteCard,14)
-stroke(RemoteCard,Surface3,0,1)
+outline(VolumeBox,Colors.Border,0,1)
 
 new("TextLabel",{
 	BackgroundTransparency = 1,
-	Position = UDim2.new(0,15,0,9),
-	Size = UDim2.new(1,-100,0,20),
-	Font = Enum.Font.GothamBold,
-	Text = "Broadcast via detected remote",
-	TextColor3 = Text,
-	TextSize = 11,
-	TextXAlignment = Enum.TextXAlignment.Left
-},RemoteCard)
-
-new("TextLabel",{
-	BackgroundTransparency = 1,
-	Position = UDim2.new(0,15,0,31),
-	Size = UDim2.new(1,-95,0,28),
+	Position = UDim2.new(0,114,0,39),
+	Size = UDim2.new(1,-128,0,34),
 	Font = Enum.Font.Gotham,
-	Text = "Local playback is always attempted first. Broadcast is optional.",
-	TextColor3 = Muted,
+	Text = "0 = mute   1 = normal   10 = max",
+	TextColor3 = Colors.Muted,
 	TextSize = 9,
 	TextWrapped = true,
 	TextXAlignment = Enum.TextXAlignment.Left
-},RemoteCard)
+},VolumeCard)
 
-local RemoteToggle
-RemoteToggle = actionButton(RemoteCard,"OFF",function()
-	if not ReplicateSound or not ReplicateSound:IsA("RemoteEvent") then
-		BroadcastRemote = false
-		RemoteToggle.Text = "OFF"
-		notify("No compatible ReplicateSound RemoteEvent was detected.","warn")
-		return
+connect(VolumeBox.FocusLost,function()
+	local v = tonumber(VolumeBox.Text)
+	if v then
+		State.volume = math.clamp(v,0,10)
 	end
-	BroadcastRemote = not BroadcastRemote
-	RemoteToggle.Text = BroadcastRemote and "ON" or "OFF"
-	RemoteToggle.BackgroundColor3 = BroadcastRemote and Accent or Surface2
-	RemoteToggle.TextColor3 = BroadcastRemote and Color3.fromRGB(6,15,12) or Text
-	notify(BroadcastRemote and "Remote broadcast enabled." or "Remote broadcast disabled.")
-end,Surface2)
-RemoteToggle.AnchorPoint = Vector2.new(1,0.5)
-RemoteToggle.Position = UDim2.new(1,-13,0.5,0)
-RemoteToggle.Size = UDim2.fromOffset(64,34)
+	VolumeBox.Text = string.format("%.2f",State.volume)
+	KATGroup.Volume = State.volume
+	toast("Volume "..string.format("%.2f",State.volume))
+end)
 
-local UIScaleCard = addInfoCard(SettingsPage,"Window scale","Use the launcher or Right Control to hide/show KAT Ultra. The interface is built around touch-friendly Activated events.",3)
+local KeybindsHeader = section(SettingsPage,"Keybinds","Click a key to rebind it, then press the new keyboard key.",3)
 
-actionButton(SettingsPage,"CENTER WINDOW",function()
+local KeybindNames = {
+	{"Toggle","Toggle UI"},
+	{"Stop","Stop all audio"},
+	{"FocusSearch","Focus sound search"},
+	{"Mute","Mute / unmute"}
+}
+
+local KeybindButtons = {}
+
+for index,pair in ipairs(KeybindNames) do
+	local keyName = pair[1]
+	local label = pair[2]
+	local row = new("Frame",{
+		BackgroundColor3 = Colors.Surface,
+		BorderSizePixel = 0,
+		LayoutOrder = 3+index,
+		Size = UDim2.new(1,0,0,46)
+	},SettingsPage)
+	corner(row,12)
+	outline(row,Colors.Border,0.08,1)
+
+	new("TextLabel",{
+		BackgroundTransparency = 1,
+		Position = UDim2.new(0,13,0,0),
+		Size = UDim2.new(1,-100,1,0),
+		Font = Enum.Font.GothamMedium,
+		Text = label,
+		TextColor3 = Colors.Text,
+		TextSize = 10,
+		TextXAlignment = Enum.TextXAlignment.Left
+	},row)
+
+	local keyButton = new("TextButton",{
+		AutoButtonColor = false,
+		BackgroundColor3 = Colors.Surface2,
+		BorderSizePixel = 0,
+		Position = UDim2.new(1,-82,0,7),
+		Size = UDim2.fromOffset(68,32),
+		Text = State.keybinds[keyName].Name,
+		TextColor3 = Colors.Accent,
+		TextSize = 9,
+		Font = Enum.Font.GothamBold
+	},row)
+	corner(keyButton,9)
+	outline(keyButton,Colors.Border,0,1)
+	KeybindButtons[keyName] = keyButton
+
+	connect(keyButton.Activated,function()
+		Rebinding = keyName
+		keyButton.Text = "PRESS KEY"
+		keyButton.TextColor3 = Colors.Warn
+	end)
+end
+
+action(SettingsPage,"CENTER WINDOW",function()
 	Main.Position = UDim2.fromScale(0.5,0.5)
 	Shadow.Position = Main.Position
-	notify("Window centered.")
-end,Surface2)
+	toast("Window centered.")
+end,Colors.Surface2,9)
 
 -- =========================================================
--- Diagnostics page
+-- Diagnostics
 -- =========================================================
 
-addSectionTitle(DiagnosticsPage,"Diagnostics","See exactly what KAT Ultra can detect and what Roblox lets the client load.")
+section(DiagnosticsPage,"Diagnostics","Nothing is labelled as ready until the script actually sees it or loads it.",1)
 
-local DiagnosticText = addInfoCard(
+local RuntimeCard,_,RuntimeBody = infoCard(
 	DiagnosticsPage,
-	"Runtime status",
-	"Version: "..VERSION.."\nPlaceId: "..tostring(game.PlaceId).."\nJobId: "..tostring(game.JobId),
-	1
-)
-
-local AudioStatusCard = addInfoCard(
-	DiagnosticsPage,
-	"Audio status",
-	"ReplicateSound: "..tostring(ReplicateSound ~= nil).."\nLocal sounds tracked: 0",
+	"Runtime",
+	"Version: "..VERSION.."\nPlaceId: "..tostring(game.PlaceId).."\nDevice: "..(UserInputService.TouchEnabled and "Touch" or "Keyboard / Mouse"),
+	78,
 	2
 )
 
-actionButton(DiagnosticsPage,"TEST MII CHANNEL",function()
-	PlaySound("143666548","Mii Channel Music",CurrentVolume,false)
-end,Accent)
+local AudioCard,_,AudioBody = infoCard(
+	DiagnosticsPage,
+	"Audio engine",
+	"Local Sound pipeline active\nTracked sounds: 0\nDetected game hook: "..tostring(ReplicateSound ~= nil),
+	78,
+	3
+)
 
-actionButton(DiagnosticsPage,"TEST VINE BOOM",function()
-	PlaySound("6308606116","Vine Boom",CurrentVolume,false)
-end,Accent2)
-
-actionButton(DiagnosticsPage,"TEST METAL PIPE",function()
-	PlaySound("7149255556","Metal Pipe Falling",CurrentVolume,false)
-end,Surface2)
-
-actionButton(DiagnosticsPage,"RUN AUDIO SCAN",function()
-	local success = 0
-	local failed = 0
-	local sampleCount = math.min(#SoundCatalog,10)
-
-	for i = 1,sampleCount do
-		local soundData = SoundCatalog[i]
-		local id = normalizeId(soundData.id)
-		local temp = Instance.new("Sound")
-		temp.Name = "KATUltraScan"
-		temp.SoundId = "rbxassetid://"..id
-		temp.Parent = SoundService
-
-		local loaded = preloadSound(temp)
-		if loaded or temp.IsLoaded then
-			success += 1
-		else
-			failed += 1
-		end
-
-		temp:Destroy()
-		task.wait()
-	end
-
-	notify("Audio scan: "..success.." loaded, "..failed.." unavailable.")
-end,Surface2)
-
--- =========================================================
--- Render defaults
--- =========================================================
-
-for _,data in pairs(TabButtons) do
-	data.indicator.Visible = false
-	data.button.BackgroundColor3 = Surface
-	data.label.TextColor3 = Muted
-	data.icon.TextColor3 = Muted
-end
-TabButtons.Sounds.indicator.Visible = true
-TabButtons.Sounds.button.BackgroundColor3 = Surface3
-TabButtons.Sounds.label.TextColor3 = Text
-TabButtons.Sounds.icon.TextColor3 = Accent
-SoundsPage.Visible = true
-
-local function updateCounters()
-	if AudioStatusCard and AudioStatusCard.Parent then
-		for _,child in ipairs(AudioStatusCard:GetChildren()) do
-			if child:IsA("TextLabel") and child.Text ~= "" and child.Position.Y.Offset > 20 then
-				child.Text = "ReplicateSound: "..tostring(ReplicateSound ~= nil).."\nLocal sounds tracked: "..tostring(#ActiveSounds)
+action(DiagnosticsPage,"VERIFY FIRST 10 CATALOG SOUNDS",function()
+	task.spawn(function()
+		local good, bad = 0,0
+		for i=1,math.min(10,#SoundCatalog) do
+			local temp = createLocalSound(SoundCatalog[i].id,false)
+			if temp then
+				local ok = waitForLoad(temp,6)
+				if ok then good += 1 else bad += 1 end
+				temp:Destroy()
+			else
+				bad += 1
 			end
 		end
+		toast("Live audio check: "..good.." OK, "..bad.." unavailable.")
+	end)
+end,Colors.Accent,4)
+
+action(DiagnosticsPage,"TEST RICKROLL",function()
+	playLocal("507443984","Never Gonna Give You Up",false)
+end,Colors.Surface2,5)
+
+action(DiagnosticsPage,"TEST MORNING MOOD",function()
+	playLocal("1846088038","Morning Mood",false)
+end,Colors.Surface2,6)
+
+action(DiagnosticsPage,"TEST MINE TURTLE",function()
+	playLocal("138112414","Mine Turtle",false)
+end,Colors.Surface2,7)
+
+action(DiagnosticsPage,"STOP TEST AUDIO",stopAllLocal,Colors.Surface2,8)
+
+-- =========================================================
+-- Window controls + drag
+-- =========================================================
+
+local function setOpen(open)
+	State.open = open
+	Backdrop.Visible = open
+	Main.Visible = open
+	Shadow.Visible = open
+	if open then
+		animate(WindowScale,0.22,{Scale=1},Enum.EasingStyle.Back)
 	end
-	if MusicInfo and MusicInfo.Parent then
-		for _,child in ipairs(MusicInfo:GetChildren()) do
-			if child:IsA("TextLabel") and child.Position.Y.Offset > 20 then
-				child.Text = "Volume: "..string.format("%.2f",CurrentVolume).."\nActive local sounds: "..tostring(#ActiveSounds)
+end
+
+local function setMinimized(minimized)
+	State.minimized = minimized
+	Content.Visible = not minimized
+	Main.ClipsDescendants = true
+
+	if minimized then
+		animate(Main,0.22,{Size=UserInputService.TouchEnabled and UDim2.new(1,-14,0,64) or UDim2.new(0.55,0,0,64)})
+		animate(Shadow,0.22,{Size=UserInputService.TouchEnabled and UDim2.new(1,-14,0,64) or UDim2.new(0.55,0,0,64)})
+	else
+		animate(Main,0.22,{Size=UserInputService.TouchEnabled and UDim2.new(1,-14,1,-92) or UDim2.new(0.78,0,0.8,0)})
+		animate(Shadow,0.22,{Size=UserInputService.TouchEnabled and UDim2.new(1,-14,1,-92) or UDim2.new(0.78,0,0.8,0)})
+	end
+end
+
+connect(MinusButton.Activated,function()
+	setMinimized(not State.minimized)
+end)
+
+connect(MobileMinus.Activated,function()
+	setMinimized(not State.minimized)
+end)
+
+connect(CloseButton.Activated,function()
+	setOpen(false)
+end)
+
+connect(MobileClose.Activated,function()
+	setOpen(false)
+end)
+
+local Launcher = new("TextButton",{
+	AutoButtonColor = false,
+	BackgroundColor3 = Colors.Surface,
+	BorderSizePixel = 0,
+	AnchorPoint = Vector2.new(1,1),
+	Position = UDim2.new(1,-12,1,-12),
+	Size = UDim2.fromOffset(52,52),
+	Text = "K",
+	TextColor3 = Colors.Accent,
+	TextSize = 20,
+	Font = Enum.Font.GothamBold,
+	ZIndex = 50
+},Root)
+corner(Launcher,15)
+outline(Launcher,Colors.Accent,0.25,1.5)
+
+connect(Launcher.Activated,function()
+	setOpen(not State.open)
+end)
+
+local dragging = false
+local dragStart = nil
+local dragOrigin = nil
+
+connect(Header.InputBegan,function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		dragOrigin = Main.Position
+		connect(input.Changed,function()
+			if input.UserInputState == Enum.UserInputState.End then
+				dragging = false
 			end
+		end)
+	end
+end)
+
+connect(UserInputService.InputChanged,function(input)
+	if not dragging then return end
+	if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then return end
+	local delta = input.Position - dragStart
+	Main.Position = UDim2.new(
+		dragOrigin.X.Scale,dragOrigin.X.Offset + delta.X,
+		dragOrigin.Y.Scale,dragOrigin.Y.Offset + delta.Y
+	)
+	Shadow.Position = Main.Position
+end)
+
+-- =========================================================
+-- Mobile / resize handling
+-- =========================================================
+
+local function updateLayout()
+	local viewport = GuiService.ViewportDisplaySize
+	local touch = UserInputService.TouchEnabled
+	local verySmall = Main.AbsoluteSize.X < 420
+
+	MobileTopBar.Visible = touch
+	Launcher.Size = touch and UDim2.fromOffset(48,48) or UDim2.fromOffset(52,52)
+
+	if touch or viewport == Enum.DisplaySize.Small or verySmall then
+		Main.Size = UDim2.new(1,-14,1,-92)
+		Shadow.Size = Main.Size
+		Sidebar.Size = UDim2.new(0,58,1,-18)
+		SideTitle.Text = "K"
+		SideTitle.TextXAlignment = Enum.TextXAlignment.Center
+		SideTitle.Position = UDim2.new(0,0,0,12)
+		SideTitle.Size = UDim2.new(1,0,0,18)
+		SideFooter.Visible = false
+		PageHolder.Position = UDim2.new(0,67,0,9)
+		PageHolder.Size = UDim2.new(1,-76,1,-18)
+
+		for _,data in pairs(Tabs) do
+			data.label.Visible = false
+			data.icon.Position = UDim2.new(0.5,-11,0,0)
+			data.icon.Size = UDim2.fromOffset(22,39)
+			data.icon.TextXAlignment = Enum.TextXAlignment.Center
+		end
+	else
+		Main.Size = UDim2.new(0.78,0,0.8,0)
+		Shadow.Size = Main.Size
+		Sidebar.Size = UDim2.new(0,142,1,-18)
+		SideTitle.Text = "ULTRA"
+		SideTitle.TextXAlignment = Enum.TextXAlignment.Left
+		SideTitle.Position = UDim2.new(0,14,0,12)
+		SideTitle.Size = UDim2.new(1,-28,0,18)
+		SideFooter.Visible = true
+		PageHolder.Position = UDim2.new(0,160,0,9)
+		PageHolder.Size = UDim2.new(1,-169,1,-18)
+
+		for _,data in pairs(Tabs) do
+			data.label.Visible = true
+			data.icon.Position = UDim2.new(0,13,0,0)
+			data.icon.Size = UDim2.fromOffset(22,39)
+			data.icon.TextXAlignment = Enum.TextXAlignment.Left
 		end
 	end
 end
+
+connect(Main:GetPropertyChangedSignal("AbsoluteSize"),updateLayout)
+connect(GuiService:GetPropertyChangedSignal("ViewportDisplaySize"),updateLayout)
+connect(UserInputService:GetPropertyChangedSignal("PreferredInput"),updateLayout)
+updateLayout()
+setOpen(true)
+
+-- =========================================================
+-- Keyboard handling
+-- =========================================================
+
+connect(UserInputService.InputBegan,function(input,processed)
+	if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+
+	if Rebinding then
+		if input.KeyCode ~= Enum.KeyCode.Unknown then
+			State.keybinds[Rebinding] = input.KeyCode
+			if KeybindButtons[Rebinding] then
+				KeybindButtons[Rebinding].Text = input.KeyCode.Name
+				KeybindButtons[Rebinding].TextColor3 = Colors.Accent
+			end
+			toast(Rebinding.." bound to "..input.KeyCode.Name)
+			Rebinding = nil
+		end
+		return
+	end
+
+	if processed then return end
+
+	if input.KeyCode == State.keybinds.Toggle then
+		setOpen(not State.open)
+	elseif input.KeyCode == State.keybinds.Stop then
+		stopAllLocal()
+	elseif input.KeyCode == State.keybinds.FocusSearch then
+		SearchBox:CaptureFocus()
+	elseif input.KeyCode == State.keybinds.Mute then
+		State.volume = State.volume > 0 and 0 or 1
+		KATGroup.Volume = State.volume
+		VolumeBox.Text = string.format("%.2f",State.volume)
+		toast(State.volume == 0 and "Audio muted." or "Audio unmuted.")
+	end
+end)
+
+-- =========================================================
+-- Live UI stats
+-- =========================================================
 
 task.spawn(function()
 	while Screen.Parent do
-		updateCounters()
-		RefreshSoundHeader()
+		AudioBody.Text = "Local Sound pipeline active\nTracked sounds: "..tostring(updateSoundCount()).."\nDetected game hook: "..tostring(ReplicateSound ~= nil)
+		musicStatus.Text = "Volume: "..string.format("%.2f",State.volume).."\nActive KAT sounds: "..tostring(updateSoundCount())
+		RuntimeBody.Text = "Version: "..VERSION.."\nPlaceId: "..tostring(game.PlaceId).."\nDevice: "..(UserInputService.TouchEnabled and "Touch" or "Keyboard / Mouse")
 		task.wait(1)
 	end
 end)
 
 -- =========================================================
--- Local bounded stress utility
+-- Local diagnostic stress test
 -- =========================================================
 
 task.spawn(function()
 	while Screen.Parent do
 		task.wait(0.1)
-		if InsanityMode then
+		if State.localStress > 0 then
+			local iterations = math.floor(300 + State.localStress * 2200)
 			local checksum = 0
-			for i = 1,1500 do
-				checksum += math.sin(i * 0.01)
+			for i=1,iterations do
+				checksum += math.sin(i*0.01)
 			end
 			if checksum == math.huge then
-				warn("KAT Ultra stress test overflow")
+				warn("KAT Ultra local stress overflow")
 			end
 		end
 	end
 end)
 
 -- =========================================================
--- Persistence helpers
+-- Safe persistence
 -- =========================================================
 
+local hasFileAPI =
+	type(isfile) == "function" and
+	type(writefile) == "function" and
+	type(isfolder) == "function" and
+	type(makefolder) == "function"
+
 local function ensureDataFolders()
-	if not hasFileAPI then return false end
-	pcall(function()
-		if not isfolder("NaikoScript") then
-			makefolder("NaikoScript")
-		end
-		if not isfolder("NaikoScript/KatPlus") then
-			makefolder("NaikoScript/KatPlus")
-		end
-	end)
-	return true
-end
-
-local function DefaultData(path, value)
-	if not ensureDataFolders() then return end
-	local full = "NaikoScript/KatPlus/"..path
-	if not isfile(full) then
-		pcall(writefile,full,tostring(value))
-	end
-end
-
-local function ChangeData(path, value, withFolder)
 	if not hasFileAPI then return end
-	local full = withFolder == false and path or "NaikoScript/KatPlus/"..path
-	pcall(writefile,full,tostring(value))
+	pcall(function()
+		if not isfolder("NaikoScript") then makefolder("NaikoScript") end
+		if not isfolder("NaikoScript/KatPlus") then makefolder("NaikoScript/KatPlus") end
+	end)
 end
 
-local function ReturnData(path, withFolder)
+local function saveSetting(path,value)
+	if not hasFileAPI then return end
+	ensureDataFolders()
+	pcall(writefile,"NaikoScript/KatPlus/"..path,tostring(value))
+end
+
+local function loadSetting(path)
 	if not hasFileAPI then return nil end
-	local full = withFolder == false and path or "NaikoScript/KatPlus/"..path
-	if isfile(full) then
-		local ok, value = pcall(readfile,full)
-		if ok then return value end
-	end
-	return nil
+	local full = "NaikoScript/KatPlus/"..path
+	if not isfile(full) then return nil end
+	local ok,value = pcall(readfile,full)
+	return ok and value or nil
 end
 
 ensureDataFolders()
-DefaultData("ToolDelete.txt","Disabled")
-DefaultData("Headshot.txt","false")
-DefaultData("ServerHop.txt","false")
-DefaultData("TargetServer.JobId","None")
+saveSetting("Version",VERSION)
 
 -- =========================================================
--- Legacy utility functions
+-- Legacy functions retained
 -- =========================================================
 
 function ServerHop()
@@ -1603,11 +1762,15 @@ function ServerHop()
 	TeleportService:TeleportToPlaceInstance(game.PlaceId,Server.id)
 end
 
+
+
 function RT(Tool)
 	if Tool and Tool:FindFirstChild("ClientEvent") then
 		Tool:FindFirstChild("ClientEvent"):FireServer("ConfirmDestruction",{})
 	end
 end
+
+
 
 function RPT(Player,ToolType)
 	ToolType = ToolType or "All"
@@ -1659,13 +1822,26 @@ function S(ID,instance,Volume,Looped,LocalVolume)
 	return PlaySound(ID,"Quick Sound",LocalVolume or Volume or 1,Looped == true)
 end
 
-function QS(ID)
-	return S(ID,workspace,1,false,1)
+
+
+function S(ID,instance,Volume,Looped,LocalVolume)
+	if not tonumber(ID) then return end
+	if ReplicateSound and ReplicateSound:IsA("RemoteEvent") then
+		pcall(function()
+			ReplicateSound:FireServer({
+				"PlaySound",
+				LocalPlayer.Name,
+				"rbxassetid://"..tostring(ID),
+				{instance},
+				tonumber(Volume) or 1,
+				Looped == true
+			})
+		end)
+	end
+	return PlaySound(ID,"Quick Sound",LocalVolume or Volume or 1,Looped == true)
 end
 
--- =========================================================
--- Legacy server-disruption routines retained as-is
--- =========================================================
+
 
 function LR()
 	task.spawn(function()
@@ -1675,6 +1851,8 @@ function LR()
 		end
 	end)
 end
+
+
 
 function Raid()
 task.spawn(function()
@@ -1713,3 +1891,4 @@ end)
 print("[KAT Ultra] UI rebuilt. Local audio pipeline ready.")
 print("[KAT Ultra] Structure score:",structureScore)
 print("[KAT Ultra] ReplicateSound:",ReplicateSound and ReplicateSound:GetFullName() or "not detected")
+
