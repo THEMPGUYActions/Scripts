@@ -429,7 +429,10 @@ local function makePage(name)
 		Visible=false
 	},pageHolder)
 	new("UIPadding",{PaddingBottom=UDim.new(0,12),PaddingLeft=UDim.new(0,2),PaddingRight=UDim.new(0,5)},page)
-	new("UIListLayout",{Padding=UDim.new(0,8),SortOrder=Enum.SortOrder.LayoutOrder},page)
+	local pageLayout=new("UIListLayout",{Padding=UDim.new(0,8),SortOrder=Enum.SortOrder.LayoutOrder},page)
+	pageLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+		page.CanvasSize=UDim2.fromOffset(0,pageLayout.AbsoluteContentSize.Y+18)
+	end)
 	pages[name]=page
 	return page
 end
@@ -1064,7 +1067,7 @@ local stressFrame=new("Frame",{
 	BackgroundColor3=C.surface,
 	BorderSizePixel=0,
 	LayoutOrder=7,
-	Size=UDim2.new(1,0,0,112)
+	Size=UDim2.new(1,0,0,116)
 },Tools)
 round(stressFrame,14)
 border(stressFrame,C.border,.08,1)
@@ -1119,14 +1122,44 @@ local stressFill=new("Frame",{
 },stressBar)
 round(stressFill,5)
 
-local sliding=false
+local stressInput=new("TextBox",{
+	BackgroundColor3=C.surface2,
+	BorderSizePixel=0,
+	ClearTextOnFocus=false,
+	Position=UDim2.new(1,-88,0,66),
+	Size=UDim2.fromOffset(74,30),
+	Font=Enum.Font.GothamBold,
+	Text="0",
+	TextColor3=C.text,
+	TextSize=9,
+	TextXAlignment=Enum.TextXAlignment.Center
+},stressFrame)
+round(stressInput,9)
+border(stressInput,C.border,0,1)
+
+local function setStressValue(v)
+	v=math.clamp(tonumber(v) or state.stress*100,0,100)
+	state.stress=v/100
+	stressFill.Size=UDim2.new(state.stress,0,1,0)
+	stressValue.Text=string.format("%d%%",math.floor(v+.5))
+	stressInput.Text=string.format("%d",math.floor(v+.5))
+end
+
 local function setStress(x)
 	local width=stressBar.AbsoluteSize.X
 	if width<=0 then return end
-	local v=math.clamp((x-stressBar.AbsolutePosition.X)/width,0,1)
-	state.stress=v
-	stressFill.Size=UDim2.new(v,0,1,0)
-	stressValue.Text=tostring(math.floor(v*100+.5)).."%"
+	setStressValue(((x-stressBar.AbsolutePosition.X)/width)*100)
+end
+
+connect(stressInput.FocusLost,function()
+	setStressValue(stressInput.Text)
+end)
+
+for _,preset in ipairs({{0,"OFF"},{25,"LIGHT"},{50,"MEDIUM"},{75,"HIGH"},{100,"MAX"}}) do
+	local p=button(stressFrame,preset[2],function() setStressValue(preset[1]) end,C.surface2,30+preset[1])
+	p.Position=UDim2.fromOffset(14+(preset[1]/25)*62,89)
+	p.Size=UDim2.fromOffset(56,18)
+	p.TextSize=7
 end
 
 connect(stressBar.InputBegan,function(input)
@@ -1274,7 +1307,7 @@ section(Diagnostics,"Diagnostics","Live values, audio checks and device details.
 local _,runtimeBody=card(
 	Diagnostics,
 	"Runtime",
-	"Version: "..VERSION.."\nPlaceId: "..tostring(game.PlaceId).."\nInput: "..(UserInputService.TouchEnabled and "Touch" or "Keyboard / Mouse"),
+	"Version: "..VERSION.."\nPlaceId: "..tostring(game.PlaceId).."\nInput: "..(UserInputService.PreferredInput==Enum.PreferredInput.Touch and "Touch" or UserInputService.TouchEnabled and "Touch-capable" or "Keyboard / Mouse"),
 	80,
 	2
 )
@@ -1311,6 +1344,7 @@ local dragInput=nil
 local dragStart=nil
 local mainStart=nil
 local barStart=nil
+local mobilePanStart=nil
 
 local function setOpen(open)
 	state.open=open
@@ -1403,41 +1437,23 @@ end
 local function beginDrag(input)
 	if not state.open or state.minimized then return end
 	if input.UserInputType~=Enum.UserInputType.MouseButton1 and input.UserInputType~=Enum.UserInputType.Touch then return end
-
 	dragging=true
 	dragInput=input
 	dragStart=input.Position
 	mainStart=main.AbsolutePosition
-	barStart=mobileBar.AbsolutePosition
 end
 
-local function updateDrag(input)
-	if not dragging or not dragInput then return end
-	if input~=dragInput and input.UserInputType~=Enum.UserInputType.MouseMovement then return end
-
+local function moveDesktop(input)
+	if not dragging or UserInputService.TouchEnabled then return end
+	if input.UserInputType~=Enum.UserInputType.MouseMovement then return end
 	local delta=input.Position-dragStart
-	if UserInputService.TouchEnabled then
-		local barSize=mobileBar.AbsoluteSize
-		local mainSize=main.AbsoluteSize
-		local maxBarY=math.max(2,root.AbsoluteSize.Y-barSize.Y-mainSize.Y-13)
-		local barX=math.clamp(barStart.X+delta.X,6,math.max(6,root.AbsoluteSize.X-barSize.X-6))
-		local barY=math.clamp(barStart.Y+delta.Y,2,maxBarY)
-		mobileBar.Position=UDim2.fromOffset(barX,barY)
-
-		local mainTop=barY+barSize.Y+7
-		local maxX=math.max(6,root.AbsoluteSize.X-mainSize.X-6)
-		local mainX=math.clamp(barX+(barSize.X-mainSize.X)*.5,6,maxX)
-		main.Position=UDim2.fromOffset(mainX+mainSize.X*.5,mainTop+mainSize.Y*.5)
-		shadow.Position=main.Position
-	else
-		local mainSize=main.AbsoluteSize
-		local x,y=clampTopLeft(mainStart.X+delta.X,mainStart.Y+delta.Y,mainSize.X,mainSize.Y,6)
-		main.Position=UDim2.fromOffset(x+mainSize.X*.5,y+mainSize.Y*.5)
-		shadow.Position=main.Position
-	end
+	local size=main.AbsoluteSize
+	local x,y=clampTopLeft(mainStart.X+delta.X,mainStart.Y+delta.Y,size.X,size.Y,6)
+	main.Position=UDim2.fromOffset(x+size.X*.5,y+size.Y*.5)
+	shadow.Position=main.Position
 end
 
-local function endDrag(input)
+local function endDesktop(input)
 	if dragging and input==dragInput then
 		dragging=false
 		dragInput=nil
@@ -1445,10 +1461,34 @@ local function endDrag(input)
 	end
 end
 
+local function panMobile(_,totalTranslation,gestureState)
+	if not UserInputService.TouchEnabled or not state.open or state.minimized then return end
+	if gestureState==Enum.UserInputState.Begin then
+		dragging=true
+		mobilePanStart=mobileBar.AbsolutePosition
+	elseif gestureState==Enum.UserInputState.Change and dragging then
+		local barSize=mobileBar.AbsoluteSize
+		local mainSize=main.AbsoluteSize
+		local maxX=math.max(6,root.AbsoluteSize.X-barSize.X-6)
+		local maxY=math.max(2,root.AbsoluteSize.Y-barSize.Y-mainSize.Y-13)
+		local x=math.clamp(mobilePanStart.X+totalTranslation.X,6,maxX)
+		local y=math.clamp(mobilePanStart.Y+totalTranslation.Y,2,maxY)
+		mobileBar.Position=UDim2.fromOffset(x,y)
+		local mainX=math.clamp(x+(barSize.X-mainSize.X)*.5,6,math.max(6,root.AbsoluteSize.X-mainSize.X-6))
+		local mainY=y+barSize.Y+7
+		main.Position=UDim2.fromOffset(mainX+mainSize.X*.5,mainY+mainSize.Y*.5)
+		shadow.Position=main.Position
+	elseif gestureState==Enum.UserInputState.End or gestureState==Enum.UserInputState.Cancel then
+		dragging=false
+		statePosition=main.Position
+	end
+end
+
 connect(dragHandle.InputBegan,beginDrag)
-connect(mobileDragHandle.InputBegan,beginDrag)
-connect(UserInputService.InputChanged,updateDrag)
-connect(UserInputService.InputEnded,endDrag)
+connect(UserInputService.InputChanged,moveDesktop)
+connect(UserInputService.InputEnded,endDesktop)
+mobileDragHandle.Active=true
+connect(mobileDragHandle.TouchPan,panMobile)
 
 connect(minus.Activated,function() setMinimized(not state.minimized) end)
 connect(mobileMin.Activated,function()
