@@ -53,7 +53,7 @@ marker.Name = "KATUltra"
 marker.Value = true
 marker.Parent = CoreGui
 
-local VERSION = "5.0"
+local VERSION = "5.1"
 
 local C = {
 	bg = Color3.fromRGB(8,10,13),
@@ -248,7 +248,8 @@ local mobileMin=new("TextButton",{
 	Text="-",
 	TextColor3=C.text,
 	TextSize=18,
-	Font=Enum.Font.GothamBold
+	Font=Enum.Font.GothamBold,
+	ZIndex=93
 },mobileBar)
 round(mobileMin,9)
 
@@ -261,7 +262,8 @@ local mobileClose=new("TextButton",{
 	Text="X",
 	TextColor3=C.danger,
 	TextSize=11,
-	Font=Enum.Font.GothamBold
+	Font=Enum.Font.GothamBold,
+	ZIndex=93
 },mobileBar)
 round(mobileClose,9)
 
@@ -333,7 +335,8 @@ local minus=new("TextButton",{
 	Text="-",
 	TextColor3=C.text,
 	TextSize=16,
-	Font=Enum.Font.GothamBold
+	Font=Enum.Font.GothamBold,
+	ZIndex=12
 },header)
 round(minus,9)
 
@@ -346,7 +349,8 @@ local close=new("TextButton",{
 	Text="X",
 	TextColor3=C.danger,
 	TextSize=10,
-	Font=Enum.Font.GothamBold
+	Font=Enum.Font.GothamBold,
+	ZIndex=12
 },header)
 round(close,9)
 
@@ -1343,24 +1347,48 @@ local dragging=false
 local dragInput=nil
 local dragStart=nil
 local mainStart=nil
-local barStart=nil
+local touchDragging=false
+local touchStartPosition=nil
 local mobilePanStart=nil
+
+local function usingMobileChrome()
+	local viewport=root.AbsoluteSize
+	local smallViewport=viewport.X>0 and viewport.X<650
+	local touchPrimary=UserInputService.PreferredInput==Enum.PreferredInput.Touch
+	return smallViewport or touchPrimary
+end
 
 local function setOpen(open)
 	state.open=open
-	if open then
-		main.Visible=not state.minimized
-		shadow.Visible=not state.minimized
-		shade.Visible=true
-		mobileBar.Visible=UserInputService.TouchEnabled
-		launcher.Visible=false
-	else
+	dragging=false
+	dragInput=nil
+	touchDragging=false
+
+	if not open then
+		state.rebind=nil
 		main.Visible=false
 		shadow.Visible=false
+		body.Visible=false
 		shade.Visible=false
-		mobileBar.Visible=UserInputService.TouchEnabled
+		mobileBar.Visible=false
 		mobileMin.Text="+"
 		launcher.Visible=true
+		return
+	end
+
+	launcher.Visible=false
+	mobileBar.Visible=usingMobileChrome()
+	body.Visible=not state.minimized
+	shade.Visible=not state.minimized
+
+	if state.minimized then
+		main.Visible=not mobileBar.Visible
+		shadow.Visible=not mobileBar.Visible
+		mobileMin.Text="+"
+	else
+		main.Visible=true
+		shadow.Visible=true
+		mobileMin.Text="-"
 	end
 end
 
@@ -1385,7 +1413,7 @@ local function centerWindow()
 	local viewport=root.AbsoluteSize
 	if size.X<=0 or size.Y<=0 or viewport.X<=0 or viewport.Y<=0 then return end
 
-	if UserInputService.TouchEnabled then
+	if usingMobileChrome() then
 		local barHeight=mobileBar.AbsoluteSize.Y
 		local x=viewport.X*.5
 		local y=barHeight+8+size.Y*.5
@@ -1402,7 +1430,7 @@ local function setMinimized(minimized)
 	if minimized then
 		statePosition=main.Position
 		body.Visible=false
-		if UserInputService.TouchEnabled then
+		if usingMobileChrome() then
 			main.Visible=false
 			shadow.Visible=false
 			mobileMin.Text="+"
@@ -1436,7 +1464,7 @@ end
 
 local function beginDrag(input)
 	if not state.open or state.minimized then return end
-	if input.UserInputType~=Enum.UserInputType.MouseButton1 and input.UserInputType~=Enum.UserInputType.Touch then return end
+	if input.UserInputType~=Enum.UserInputType.MouseButton1 then return end
 	dragging=true
 	dragInput=input
 	dragStart=input.Position
@@ -1444,7 +1472,7 @@ local function beginDrag(input)
 end
 
 local function moveDesktop(input)
-	if not dragging or UserInputService.TouchEnabled then return end
+	if not dragging then return end
 	if input.UserInputType~=Enum.UserInputType.MouseMovement then return end
 	local delta=input.Position-dragStart
 	local size=main.AbsoluteSize
@@ -1461,25 +1489,46 @@ local function endDesktop(input)
 	end
 end
 
-local function panMobile(_,totalTranslation,gestureState)
-	if not UserInputService.TouchEnabled or not state.open or state.minimized then return end
+local function panDesktopTouch(_,totalTranslation,gestureState)
+	if not state.open or state.minimized or usingMobileChrome() then return end
 	if gestureState==Enum.UserInputState.Begin then
-		dragging=true
+		touchDragging=true
+		touchStartPosition=main.AbsolutePosition
+	elseif gestureState==Enum.UserInputState.Change and touchDragging then
+		local size=main.AbsoluteSize
+		local x,y=clampTopLeft(
+			touchStartPosition.X+totalTranslation.X,
+			touchStartPosition.Y+totalTranslation.Y,
+			size.X,size.Y,6
+		)
+		main.Position=UDim2.fromOffset(x+size.X*.5,y+size.Y*.5)
+		shadow.Position=main.Position
+	elseif gestureState==Enum.UserInputState.End or gestureState==Enum.UserInputState.Cancel then
+		touchDragging=false
+		statePosition=main.Position
+	end
+end
+
+local function panMobile(_,totalTranslation,gestureState)
+	if not state.open or state.minimized or not usingMobileChrome() then return end
+	if gestureState==Enum.UserInputState.Begin then
+		touchDragging=true
 		mobilePanStart=mobileBar.AbsolutePosition
-	elseif gestureState==Enum.UserInputState.Change and dragging then
+	elseif gestureState==Enum.UserInputState.Change and touchDragging then
+		local viewport=root.AbsoluteSize
 		local barSize=mobileBar.AbsoluteSize
 		local mainSize=main.AbsoluteSize
-		local maxX=math.max(6,root.AbsoluteSize.X-barSize.X-6)
-		local maxY=math.max(2,root.AbsoluteSize.Y-barSize.Y-mainSize.Y-13)
+		local maxX=math.max(6,viewport.X-barSize.X-6)
+		local maxY=math.max(2,viewport.Y-barSize.Y-mainSize.Y-13)
 		local x=math.clamp(mobilePanStart.X+totalTranslation.X,6,maxX)
 		local y=math.clamp(mobilePanStart.Y+totalTranslation.Y,2,maxY)
 		mobileBar.Position=UDim2.fromOffset(x,y)
-		local mainX=math.clamp(x+(barSize.X-mainSize.X)*.5,6,math.max(6,root.AbsoluteSize.X-mainSize.X-6))
-		local mainY=y+barSize.Y+7
+		local mainX=math.clamp(x+(barSize.X-mainSize.X)*.5,6,math.max(6,viewport.X-mainSize.X-6))
+		local mainY=math.min(y+barSize.Y+7,math.max(barSize.Y+7,viewport.Y-mainSize.Y-6))
 		main.Position=UDim2.fromOffset(mainX+mainSize.X*.5,mainY+mainSize.Y*.5)
 		shadow.Position=main.Position
 	elseif gestureState==Enum.UserInputState.End or gestureState==Enum.UserInputState.Cancel then
-		dragging=false
+		touchDragging=false
 		statePosition=main.Position
 	end
 end
@@ -1487,10 +1536,14 @@ end
 connect(dragHandle.InputBegan,beginDrag)
 connect(UserInputService.InputChanged,moveDesktop)
 connect(UserInputService.InputEnded,endDesktop)
-mobileDragHandle.Active=true
+connect(dragHandle.TouchPan,panDesktopTouch)
 connect(mobileDragHandle.TouchPan,panMobile)
 
-connect(minus.Activated,function() setMinimized(not state.minimized) end)
+connect(minus.Activated,function()
+	if state.open then
+		setMinimized(not state.minimized)
+	end
+end)
 connect(mobileMin.Activated,function()
 	if not state.open then
 		state.open=true
@@ -1504,25 +1557,31 @@ connect(mobileMin.Activated,function()
 	end
 end)
 connect(close.Activated,function() setOpen(false) end)
-connect(mobileClose.Activated,function() setOpen(false) end)
+connect(mobileClose.Activated,function()
+	setOpen(false)
+end)
 connect(launcher.Activated,function()
 	state.minimized=false
 	main.Size=normalWindowSize()
 	shadow.Size=main.Size
-	mobileBar.Position=UDim2.new(.5,-150,0,7)
-	centerWindow()
 	setOpen(true)
+	mobileBar.Position=UDim2.fromOffset(
+		math.max(6,(root.AbsoluteSize.X-mobileBar.AbsoluteSize.X)*.5),
+		7
+	)
+	centerWindow()
 end)
 
 -- Responsive layout
 
 function layout()
 	local viewport=root.AbsoluteSize
-	local touch=UserInputService.TouchEnabled
-	mobileBar.Visible=touch and (state.open or not main.Visible)
+	local mobileChrome=usingMobileChrome()
+	mobileBar.Visible=state.open and mobileChrome
 
-	if touch then
-		mobileBar.Size=UDim2.new(1,-14,0,46)
+	if mobileChrome then
+		local barWidth=math.max(180,math.min(380,viewport.X-14))
+		mobileBar.Size=UDim2.fromOffset(barWidth,46)
 		header.Visible=false
 		body.Position=UDim2.new(0,0,0,0)
 		body.Size=UDim2.fromScale(1,1)
@@ -1532,11 +1591,17 @@ function layout()
 			shadow.Size=main.Size
 			local size=main.AbsoluteSize
 			local barSize=mobileBar.AbsoluteSize
-			if mobileBar.AbsolutePosition.X==0 and mobileBar.AbsolutePosition.Y==0 then
-				mobileBar.Position=UDim2.new(.5,-math.min(150,viewport.X*.5-7),0,7)
+			local maxBarX=math.max(6,viewport.X-barSize.X-6)
+			local maxBarY=math.max(2,viewport.Y-barSize.Y-size.Y-13)
+			local currentBarX=mobileBar.AbsolutePosition.X
+			local currentBarY=mobileBar.AbsolutePosition.Y
+			if currentBarX < 6 or currentBarX > maxBarX or currentBarY < 2 or currentBarY > maxBarY then
+				currentBarX=math.max(6,(viewport.X-barSize.X)*.5)
+				currentBarY=7
+				mobileBar.Position=UDim2.fromOffset(currentBarX,currentBarY)
 			end
-			local left=math.max(6,mobileBar.AbsolutePosition.X+(barSize.X-size.X)*.5)
-			local top=math.max(barSize.Y+7,6)
+			local left=math.clamp(currentBarX+(barSize.X-size.X)*.5,6,math.max(6,viewport.X-size.X-6))
+			local top=math.clamp(currentBarY+barSize.Y+7,barSize.Y+7,math.max(barSize.Y+7,viewport.Y-size.Y-6))
 			main.Position=UDim2.fromOffset(left+size.X*.5,top+size.Y*.5)
 			shadow.Position=main.Position
 		end
