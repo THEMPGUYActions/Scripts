@@ -296,6 +296,7 @@ tween(MainScale,TweenInfo.new(0.52,Enum.EasingStyle.Back,Enum.EasingDirection.Ou
 
 local Header = new("Frame",{
 	Name = "Header",
+	Active = true,
 	BackgroundColor3 = Surface,
 	BorderSizePixel = 0,
 	Size = UDim2.new(1,0,0,74),
@@ -1289,7 +1290,8 @@ new("TextLabel",{
 	TextXAlignment = Enum.TextXAlignment.Left
 },RemoteCard)
 
-local RemoteToggle = actionButton(RemoteCard,"OFF",function()
+local RemoteToggle
+RemoteToggle = actionButton(RemoteCard,"OFF",function()
 	if not ReplicateSound or not ReplicateSound:IsA("RemoteEvent") then
 		BroadcastRemote = false
 		RemoteToggle.Text = "OFF"
@@ -1593,8 +1595,12 @@ function RPT(Player,ToolType)
 	end
 end
 
+function S(ID,instance,Volume,Looped,LocalVolume)
+	return PlaySound(ID,"Quick Sound",LocalVolume or Volume or 1,Looped == true)
+end
+
 function QS(ID)
-	return PlaySound(ID,"Quick Sound",1,false)
+	return S(ID,workspace,1,false,1)
 end
 
 -- =========================================================
@@ -1613,7 +1619,7 @@ end
 function Raid()
 task.spawn(function()
 while task.wait(math.random(10,20)) do
-notify("Attempting to change servers (from raid)","warn")
+notify("Attempting to change servers (from raid)")
 ServerHop()
 end
 end)
@@ -1621,7 +1627,7 @@ task.spawn(function()
 for i = 1,250 do
 	task.wait(0.05)
 	task.spawn(function()
-	PlaySound("6600188325","Legacy Raid Audio",0.02,true)
+	S(6600188325,workspace,10,true,0.02)
 end)
 	task.wait()
 end
@@ -1629,8 +1635,8 @@ end)
 task.spawn(function()
 while task.wait(0.03) do
 	for i,v in pairs(game.Players:GetPlayers()) do
-		RPT(v)
-	end
+				RPT(v)
+			end
 end
 end)
 end
