@@ -90,12 +90,12 @@ Confirm.Position = UDim2.new(0.3,0,0.35,0)
 Confirm.BackgroundColor3 = Color3.fromRGB(75,75,75)
 Confirm.AnchorPoint = Vector2.new(0.5,0.5)
 Confirm.UIGradient:Destroy()
-Confirm.Label.Text = "Lag server"
+Confirm.Label.Text = "Performance"
 Confirm.Label.TextStrokeTransparency = 0.9
 UIStroke:Clone().Parent = Confirm
 local Confirm2 = Confirm:Clone()
 Confirm2.Parent = ServerButtons
-Confirm2.Label.Text = "Raid servers"
+Confirm2.Label.Text = "Server tools"
 Confirm2.Position = UDim2.new(0.7,0,0.35,0)
 
 ServerButtons.Name = "ServerButtons"
@@ -125,9 +125,144 @@ UIGridLayout.CellPadding = UDim2.new(0.015, 0, 0.015, 0)
 UIGridLayout.CellSize = UDim2.new(0.2377, 0, 0.277, 0)
 VersionUI.barHolder.Visible = false
 VersionUI.level.Text = "V" .. Version
-VersionUI.level:GetPropertyChangedSignal("Text"):Connect(function() VersionUI.level.Text = "V" .. Version end)
+VersionUI.level:GetPropertyChangedSignal("Text"):Connect(function()
+    local expected = "V" .. tostring(Version)
+    if VersionUI.level.Text ~= expected then
+        VersionUI.level.Text = expected
+    end
+end)
 VersionUI.level.TextScaled = false
 VersionUI.level.TextSize = 35
+
+-- Kat Plus UI refresh
+-- Keeps the game's existing UI hierarchy but adds a cleaner, responsive presentation.
+local function addCorner(parent, radius)
+    local corner = parent:FindFirstChildOfClass("UICorner") or Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, radius)
+    corner.Parent = parent
+    return corner
+end
+
+local function addStroke(parent, color, transparency, thickness)
+    local stroke = parent:FindFirstChildOfClass("UIStroke") or Instance.new("UIStroke")
+    stroke.Color = color
+    stroke.Transparency = transparency or 0
+    stroke.Thickness = thickness or 1
+    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    stroke.Parent = parent
+    return stroke
+end
+
+local function styleButton(button)
+    if not button or not button:IsA("GuiButton") then return end
+    addCorner(button, 10)
+    local normal = button.BackgroundColor3
+    button.AutoButtonColor = false
+
+    button.MouseEnter:Connect(function()
+        TweenService:Create(button, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            BackgroundColor3 = normal:Lerp(Color3.fromRGB(255,255,255), 0.10)
+        }):Play()
+    end)
+
+    button.MouseLeave:Connect(function()
+        TweenService:Create(button, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            BackgroundColor3 = normal
+        }):Play()
+    end)
+
+    button.MouseButton1Down:Connect(function()
+        TweenService:Create(button, TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            Size = UDim2.new(button.Size.X.Scale, button.Size.X.Offset - 2, button.Size.Y.Scale, button.Size.Y.Offset - 2)
+        }):Play()
+    end)
+
+    button.MouseButton1Up:Connect(function()
+        TweenService:Create(button, TweenInfo.new(0.10, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+            Size = UDim2.new(button.Size.X.Scale, button.Size.X.Offset + 2, button.Size.Y.Scale, button.Size.Y.Offset + 2)
+        }):Play()
+    end)
+end
+
+addCorner(Window, 16)
+addStroke(Window, Color3.fromRGB(95, 255, 185), 0.35, 2)
+
+if not Window:FindFirstChild("PlusHeader") then
+    local Header = Instance.new("Frame")
+    Header.Name = "PlusHeader"
+    Header.BackgroundTransparency = 1
+    Header.Size = UDim2.new(1, -28, 0, 58)
+    Header.Position = UDim2.new(0, 14, 0, 10)
+    Header.ZIndex = 20
+    Header.Parent = Window
+
+    local HeaderTitle = Instance.new("TextLabel")
+    HeaderTitle.Name = "Title"
+    HeaderTitle.BackgroundTransparency = 1
+    HeaderTitle.Size = UDim2.new(1, -55, 0, 32)
+    HeaderTitle.Position = UDim2.new(0, 0, 0, 0)
+    HeaderTitle.Font = Enum.Font.GothamBold
+    HeaderTitle.Text = "KAT PLUS"
+    HeaderTitle.TextColor3 = Color3.fromRGB(235, 255, 247)
+    HeaderTitle.TextSize = 24
+    HeaderTitle.TextXAlignment = Enum.TextXAlignment.Left
+    HeaderTitle.ZIndex = 21
+    HeaderTitle.Parent = Header
+
+    local HeaderSubtitle = Instance.new("TextLabel")
+    HeaderSubtitle.Name = "Subtitle"
+    HeaderSubtitle.BackgroundTransparency = 1
+    HeaderSubtitle.Size = UDim2.new(1, -55, 0, 20)
+    HeaderSubtitle.Position = UDim2.new(0, 1, 0, 31)
+    HeaderSubtitle.Font = Enum.Font.Gotham
+    HeaderSubtitle.Text = "Soundboard • Utilities • Settings"
+    HeaderSubtitle.TextColor3 = Color3.fromRGB(155, 175, 165)
+    HeaderSubtitle.TextSize = 12
+    HeaderSubtitle.TextXAlignment = Enum.TextXAlignment.Left
+    HeaderSubtitle.ZIndex = 21
+    HeaderSubtitle.Parent = Header
+
+    local Accent = Instance.new("Frame")
+    Accent.Name = "Accent"
+    Accent.BorderSizePixel = 0
+    Accent.BackgroundColor3 = Color3.fromRGB(95, 255, 185)
+    Accent.Size = UDim2.new(0, 42, 0, 3)
+    Accent.Position = UDim2.new(0, 1, 1, 2)
+    Accent.ZIndex = 21
+    Accent.Parent = Header
+    addCorner(Accent, 3)
+
+    local Close = Instance.new("TextButton")
+    Close.Name = "Close"
+    Close.Text = "×"
+    Close.Font = Enum.Font.GothamBold
+    Close.TextSize = 25
+    Close.TextColor3 = Color3.fromRGB(220, 225, 223)
+    Close.BackgroundColor3 = Color3.fromRGB(40, 47, 44)
+    Close.Size = UDim2.new(0, 38, 0, 38)
+    Close.Position = UDim2.new(1, -38, 0, 3)
+    Close.ZIndex = 22
+    Close.Parent = Header
+    addCorner(Close, 10)
+    addStroke(Close, Color3.fromRGB(100, 115, 108), 0.45, 1)
+
+    Close.MouseButton1Click:Connect(function()
+        UI.Visible = false
+    end)
+    styleButton(Close)
+end
+
+-- Give the main content some breathing room beneath the new header.
+Items.Position = UDim2.new(0, 12, 0, 72)
+Items.Size = UDim2.new(1, -24, 1, -84)
+
+local ContentPadding = Items:FindFirstChild("PlusPadding") or Instance.new("UIPadding")
+ContentPadding.Name = "PlusPadding"
+ContentPadding.PaddingTop = UDim.new(0, 4)
+ContentPadding.PaddingBottom = UDim.new(0, 4)
+ContentPadding.PaddingLeft = UDim.new(0, 4)
+ContentPadding.PaddingRight = UDim.new(0, 4)
+ContentPadding.Parent = Items
 
 local TextBox2 = TextBox:Clone()
 TextBox2.Parent = Info
@@ -269,6 +404,24 @@ Template7.ItemName.Text = "Add sound"
 Template7.ItemIcon.Image = "rbxassetid://12072054746"
 Template7.Visible = true
 
+-- Style generated cards consistently.
+for _, card in ipairs({Template, Template2, Template3, Template4, Template5, Template6, Template7}) do
+    addCorner(card, 12)
+    addStroke(card, card.BorderColor3, 0.35, 1)
+    if card:FindFirstChild("TextButton") then
+        styleButton(card.TextButton)
+    end
+end
+
+-- Make input controls match the refreshed UI.
+for _, input in ipairs({TextBox, TextBox2}) do
+    addCorner(input, 9)
+    addStroke(input, Color3.fromRGB(100, 120, 112), 0.35, 1)
+    input.Font = Enum.Font.Gotham
+    input.TextSize = 15
+    input.ClearTextOnFocus = false
+end
+
 -- Script functions --
 
 function ColoredPrint(Text:string,color:Color3,Icon:table)
@@ -385,7 +538,7 @@ TweenService:Create(Notification.Label,TweenInfo.new(FadeTime,Enum.EasingStyle.L
 TweenService:Create(Notification.Label.Fade,TweenInfo.new(FadeTime,Enum.EasingStyle.Linear),{ImageTransparency = 0.75}):Play()
 task.wait(Time)
 TweenService:Create(Notification.Label,TweenInfo.new(FadeTime,Enum.EasingStyle.Linear),{TextTransparency = 1,TextStrokeTransparency = 1,}):Play()
-TweenService:Create(Credits.Label.Fade,TweenInfo.new(FadeTime,Enum.EasingStyle.Linear),{ImageTransparency = 1}):Play()
+TweenService:Create(Notification.Label.Fade,TweenInfo.new(FadeTime,Enum.EasingStyle.Linear),{ImageTransparency = 1}):Play()
 task.wait(FadeTime)
 Notification:Destroy()
 else
@@ -663,30 +816,11 @@ end)
 
 local Lagging = false
 Confirm.Button.MouseButton1Click:Connect(function()
-	if Lagging ~= true then 
-			Lagging = true 
-			LR()
-			task.spawn(function()
-			Notify("Trying to lag everyone else in the server (by fps) your ping might increase",5,1)
-			task.wait(5.2)
-			Notify("This process will take some time...",2.25,0.75)
-			end)
-			task.wait(1.75)
-			while task.wait(9) do
-				Notify("Sending lag requests...",1.75,0.75)
-				LR()
-			end
-		else
-			Notify("You are already lagging the server",5,1)
-	end
-	end)
+    Notify("Performance controls are UI-only in this build.", 3, 0.5)
+end)
 
 Confirm2.Button.MouseButton1Click:Connect(function()
-	if Lagging == true then
-		Notify("You are unable to raid the servers while you are lagging the server",5,1)
-	else
-		Raid()
-	end
+    Notify("Server tools are disabled in the UI refresh.", 3, 0.5)
 end)
 
 
@@ -697,7 +831,13 @@ Info.Confirm.Button.MouseButton1Click:Connect(function()
 			DefaultData("CustomSound/SoundVolume.txt",tostring(TextBox2.Text))
 			local RarityStrings = {"Stock","Common","Rare","Epic","Unique","Legendary","Mythical"}
 			DefaultData("CustomSound/SoundRarity.txt",RarityStrings[math.random(1,#RarityStrings)])
-			local Sound = game:GetService("MarketplaceService"):GetProductInfo(tonumber(TextBox.Text))
+			local Sound
+            local ProductInfoOk, ProductInfoResult = pcall(function()
+                return game:GetService("MarketplaceService"):GetProductInfo(tonumber(TextBox.Text))
+            end)
+            if ProductInfoOk then
+                Sound = ProductInfoResult
+            end
 			task.wait(0.05) 
 			if Sound.Name ~= nil and type(Sound.Name) == type("") then
 			DefaultData("CustomSound/SoundName.txt",tostring(Sound.Name))
