@@ -2,19 +2,39 @@
 
 repeat task.wait() until game:IsLoaded() and task.wait(1.5)
 
-if game:GetService("CoreGui"):FindFirstChild("Plus") then
-	return warn("Script already running")
-elseif tostring(game.GameId) == "621129760" then
-	Instance.new("BoolValue",game:GetService("CoreGui")).Name = "Plus"
-else
-	return warn("Incorrect game")
+-- KAT Ultra bootstrap: identify the game by its live UI/remote structure, not a hardcoded PlaceId.
+local CoreGui = game:GetService("CoreGui")
+if CoreGui:FindFirstChild("KATUltra") then
+	return warn("KAT Ultra is already running")
 end
 
 -- General Variables --
 
 local LocalPlayer = game:GetService("Players").LocalPlayer
 local PlayerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui",20)
-local MainUI = PlayerGui:WaitForChild("GameUI",10):WaitForChild("HUD",10)
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local SoundService = game:GetService("SoundService")
+
+local GameUI = PlayerGui:WaitForChild("GameUI",10)
+local HUD = GameUI and GameUI:FindFirstChild("HUD")
+local Interface = GameUI and GameUI:FindFirstChild("Interface")
+local Round = HUD and HUD:FindFirstChild("Round")
+local RoundDisplay = Round and Round:FindFirstChild("RoundDisplay")
+local RoundEnd = RoundDisplay and RoundDisplay:FindFirstChild("RoundEnd")
+local BottomBar = Interface and Interface:FindFirstChild("BottomBar")
+local SideButtons = Interface and Interface:FindFirstChild("SideButtons")
+
+local GameEvents = ReplicatedStorage:FindFirstChild("GameEvents")
+local Misk = GameEvents and GameEvents:FindFirstChild("Misk")
+local ReplicateSound = Misk and Misk:FindFirstChild("ReplicateSound")
+
+if not (GameUI and HUD and Interface and RoundEnd and BottomBar and SideButtons) then
+	return warn("KAT Ultra: compatible game structure was not detected")
+end
+
+Instance.new("BoolValue",CoreGui).Name = "KATUltra"
+
+local MainUI = HUD
 local VersionUI = PlayerGui:WaitForChild("GameUI",10):WaitForChild("Interface",10):WaitForChild("BottomBar",10).TempXP
 local UI = MainUI.Round.RoundDisplay.RoundEnd:Clone()
 local Window = UI.Window
@@ -28,11 +48,14 @@ local TweenService = game:GetService("TweenService")
 local Settings = MainUI.Parent.Interface.SettingsPane
 local Rarities = {Stock = Color3.fromRGB(255,255,255),Common = Color3.fromRGB(46,255,0),Rare = Color3.fromRGB(0,166,255),Epic = Color3.fromRGB(247, 6, 211),Unique = Color3.fromRGB(255,200,0),Legendary = Color3.fromRGB(245, 5, 0),Mythical = Color3.fromRGB(227,11,255)}
 local CurrentSoundSequenceType = nil
+local ActiveSounds = {}
+local InsanityMode = false
+local CompatibilityStatus = ReplicateSound and ReplicateSound:IsA("RemoteEvent") and "Remote detected" or "Local mode"
 local WeaponRemoveCooldown = false
 local WeaponRemoveState = "Disabled"
 local Banned = false
 local Times = 0
-local Version = 1.1
+local Version = 2.0
 
 -- UI Creation --
 
@@ -90,12 +113,12 @@ Confirm.Position = UDim2.new(0.3,0,0.35,0)
 Confirm.BackgroundColor3 = Color3.fromRGB(75,75,75)
 Confirm.AnchorPoint = Vector2.new(0.5,0.5)
 Confirm.UIGradient:Destroy()
-Confirm.Label.Text = "Performance"
+Confirm.Label.Text = "Insanity Lab"
 Confirm.Label.TextStrokeTransparency = 0.9
 UIStroke:Clone().Parent = Confirm
 local Confirm2 = Confirm:Clone()
 Confirm2.Parent = ServerButtons
-Confirm2.Label.Text = "Server tools"
+Confirm2.Label.Text = "Music / Tools"
 Confirm2.Position = UDim2.new(0.7,0,0.35,0)
 
 ServerButtons.Name = "ServerButtons"
@@ -202,7 +225,7 @@ if not Window:FindFirstChild("PlusHeader") then
     HeaderTitle.Size = UDim2.new(1, -55, 0, 32)
     HeaderTitle.Position = UDim2.new(0, 0, 0, 0)
     HeaderTitle.Font = Enum.Font.GothamBold
-    HeaderTitle.Text = "KAT PLUS"
+    HeaderTitle.Text = "KAT ULTRA"
     HeaderTitle.TextColor3 = Color3.fromRGB(235, 255, 247)
     HeaderTitle.TextSize = 24
     HeaderTitle.TextXAlignment = Enum.TextXAlignment.Left
@@ -215,7 +238,7 @@ if not Window:FindFirstChild("PlusHeader") then
     HeaderSubtitle.Size = UDim2.new(1, -55, 0, 20)
     HeaderSubtitle.Position = UDim2.new(0, 1, 0, 31)
     HeaderSubtitle.Font = Enum.Font.Gotham
-    HeaderSubtitle.Text = "Soundboard • Utilities • Settings"
+    HeaderSubtitle.Text = "Soundboard • Music • Performance • Settings"
     HeaderSubtitle.TextColor3 = Color3.fromRGB(155, 175, 165)
     HeaderSubtitle.TextSize = 12
     HeaderSubtitle.TextXAlignment = Enum.TextXAlignment.Left
@@ -275,7 +298,7 @@ TextBox2.PlaceholderText = "Volume"
 Result.BackgroundColor3 = Color3.fromRGB(47, 57, 52)
 Result.NotableMention.Text = "From naiko exploits"
 Result.NotableMention.TextStrokeTransparency = 0.5
-Result.Title.Text = "Kat Plus"
+Result.Title.Text = "KAT Ultra"
 Result.Title.TextColor3 = Color3.fromRGB(12, 255, 139)
 Result.Title.TextStrokeTransparency = 0.25
 
@@ -606,16 +629,49 @@ end
     end
 
 function S(ID,instance,Volume:number,Looped:boolean,LocalVolume:number)
-local Data = {"PlaySound",LocalPlayer.Name,"rbxassetid://" .. ID,{instance},tonumber(Volume),Looped}
-game.ReplicatedStorage.GameEvents.Misk.ReplicateSound:FireServer(Data)
-local Sound = Instance.new("Sound")
-Sound.Parent = instance
-Sound.SoundId = "rbxassetid://" .. tostring(ID)
-Sound.Volume = tonumber(LocalVolume) or tonumber(Volume)
-Sound.Looped = Looped
-Sound:Play()
-Sound.Stopped:Wait()
-Sound:Destroy()
+	if not tonumber(ID) then return end
+	if ReplicateSound and ReplicateSound:IsA("RemoteEvent") then
+		pcall(function()
+			ReplicateSound:FireServer({"PlaySound",LocalPlayer.Name,"rbxassetid://" .. tostring(ID),{instance},tonumber(Volume),Looped})
+		end)
+	end
+	local Sound = Instance.new("Sound")
+	Sound.Name = "KATUltraSound"
+	Sound.Parent = instance
+	Sound.SoundId = "rbxassetid://" .. tostring(ID)
+	Sound.Volume = tonumber(LocalVolume) or tonumber(Volume) or 1
+	Sound.Looped = Looped == true
+	table.insert(ActiveSounds,Sound)
+	Sound:Play()
+	if not Sound.Looped then
+		Sound.Ended:Once(function()
+			for i,v in ipairs(ActiveSounds) do
+				if v == Sound then table.remove(ActiveSounds,i) break end
+			end
+			if Sound.Parent then Sound:Destroy() end
+		end)
+	end
+	return Sound
+end
+
+local function StopMusic()
+	local stopped = 0
+	for _,sound in ipairs(ActiveSounds) do
+		if sound and sound.Parent then
+			sound:Stop()
+			stopped += 1
+		end
+	end
+	for _,root in ipairs({workspace,SoundService,PlayerGui}) do
+		for _,sound in ipairs(root:GetDescendants()) do
+			if sound:IsA("Sound") and sound.Playing then
+				sound:Stop()
+				stopped += 1
+			end
+		end
+	end
+	ActiveSounds = {}
+	Notify("Stopped "..tostring(stopped).." local sounds.",2.5,0.35)
 end
 
 function RT(Tool)
@@ -667,8 +723,7 @@ end
 end
 
 function QS(ID)
-local Data = {"PlaySound",LocalPlayer.Name,("rbxassetid://" .. tostring(ID)),{workspace},"1",false}
-game.ReplicatedStorage.GameEvents.Misk.ReplicateSound:FireServer(Data)
+	return S(ID,workspace,1,false,1)
 end
 
 function LR()
@@ -809,11 +864,33 @@ end)
 
 local Lagging = false
 Confirm.Button.MouseButton1Click:Connect(function()
-    Notify("Performance controls are UI-only in this build.", 3, 0.5)
+	InsanityMode = not InsanityMode
+	Notify(InsanityMode and "Insanity Lab ON • local stress test" or "Insanity Lab OFF",2.5,0.35)
 end)
 
 Confirm2.Button.MouseButton1Click:Connect(function()
-    Notify("Server tools are disabled in the UI refresh.", 3, 0.5)
+	StopMusic()
+end)
+
+task.spawn(function()
+	while task.wait(0.1) do
+		if InsanityMode then
+			-- Bounded client-side workload. Does not fire remotes or affect other players.
+			local checksum = 0
+			for i = 1,1500 do
+				checksum += math.sin(i * 0.01)
+			end
+			if checksum == math.huge then warn("KAT Ultra stress test overflow") end
+		end
+	end
+end)
+
+task.spawn(function()
+	while task.wait(1) do
+		if HeaderSubtitle and HeaderSubtitle.Parent then
+			HeaderSubtitle.Text = "Soundboard • Music • Performance • "..CompatibilityStatus
+		end
+	end
 end)
 
 
@@ -1013,4 +1090,4 @@ else
 	ChangeData("TargetServer.JobId","None")
 end
 
-ColoredPrint("Kat plus has loaded successfully",Color3.fromRGB(0,200,125),{"success",true})
+ColoredPrint("KAT Ultra has loaded successfully",Color3.fromRGB(0,200,125),{"success",true})
