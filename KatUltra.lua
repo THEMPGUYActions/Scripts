@@ -1418,16 +1418,15 @@ local function updateDrag(input)
 	local delta=input.Position-dragStart
 	if UserInputService.TouchEnabled then
 		local barSize=mobileBar.AbsoluteSize
-		local barX,barY=clampTopLeft(barStart.X+delta.X,barStart.Y+delta.Y,barSize.X,barSize.Y,2)
+		local mainSize=main.AbsoluteSize
+		local maxBarY=math.max(2,root.AbsoluteSize.Y-barSize.Y-mainSize.Y-13)
+		local barX=math.clamp(barStart.X+delta.X,6,math.max(6,root.AbsoluteSize.X-barSize.X-6))
+		local barY=math.clamp(barStart.Y+delta.Y,2,maxBarY)
 		mobileBar.Position=UDim2.fromOffset(barX,barY)
 
-		local mainSize=main.AbsoluteSize
 		local mainTop=barY+barSize.Y+7
-		local mainX=barX+(barSize.X-mainSize.X)*.5
 		local maxX=math.max(6,root.AbsoluteSize.X-mainSize.X-6)
-		local maxY=math.max(mainTop,root.AbsoluteSize.Y-mainSize.Y-6)
-		mainX=math.clamp(mainX,6,maxX)
-		mainTop=math.clamp(mainTop,mainTop,maxY)
+		local mainX=math.clamp(barX+(barSize.X-mainSize.X)*.5,6,maxX)
 		main.Position=UDim2.fromOffset(mainX+mainSize.X*.5,mainTop+mainSize.Y*.5)
 		shadow.Position=main.Position
 	else
@@ -1452,7 +1451,18 @@ connect(UserInputService.InputChanged,updateDrag)
 connect(UserInputService.InputEnded,endDrag)
 
 connect(minus.Activated,function() setMinimized(not state.minimized) end)
-connect(mobileMin.Activated,function() setMinimized(not state.minimized) end)
+connect(mobileMin.Activated,function()
+	if not state.open then
+		state.open=true
+		state.minimized=false
+		main.Size=normalWindowSize()
+		shadow.Size=main.Size
+		centerWindow()
+		setOpen(true)
+	else
+		setMinimized(not state.minimized)
+	end
+end)
 connect(close.Activated,function() setOpen(false) end)
 connect(mobileClose.Activated,function() setOpen(false) end)
 connect(launcher.Activated,function()
@@ -1469,7 +1479,7 @@ end)
 function layout()
 	local viewport=root.AbsoluteSize
 	local touch=UserInputService.TouchEnabled
-	mobileBar.Visible=touch and state.open
+	mobileBar.Visible=touch and (state.open or not main.Visible)
 
 	if touch then
 		mobileBar.Size=UDim2.new(1,-14,0,46)
