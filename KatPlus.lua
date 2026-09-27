@@ -286,10 +286,7 @@ local MainSizeConstraint = new("UISizeConstraint",{
 	MaxSize = Vector2.new(760,760)
 },Main)
 
-local MainAspect = new("UIAspectRatioConstraint",{
-	AspectRatio = 1.18,
-	DominantAxis = Enum.DominantAxis.Width
-},Main)
+-- The window is sized responsively below; no fixed aspect ratio is used so portrait phones do not clip the panel.
 
 local MainScale = new("UIScale",{Scale = 0},Main)
 tween(MainScale,TweenInfo.new(0.52,Enum.EasingStyle.Back,Enum.EasingDirection.Out),{Scale = 1})
@@ -379,7 +376,7 @@ local NavTitle = new("TextLabel",{
 local NavList = new("Frame",{
 	BackgroundTransparency = 1,
 	Position = UDim2.new(0,8,0,45),
-	Size = UDim2.new(1,-16,0,170)
+	Size = UDim2.new(1,-16,0,240)
 },Nav)
 
 new("UIListLayout",{
@@ -462,6 +459,56 @@ createTab("Music","♫",2)
 createTab("Tools","◆",3)
 createTab("Settings","⚙",4)
 createTab("Diagnostics","?",5)
+
+
+-- =========================================================
+-- Responsive layout
+-- =========================================================
+
+local function updateResponsiveLayout()
+	local narrow = Main.AbsoluteSize.X < 520
+
+	if narrow then
+		Main.Size = UDim2.new(1,-14,1,-14)
+		Shadow.Size = Main.Size
+		Nav.Size = UDim2.new(0,62,1,-20)
+		NavTitle.Text = "K"
+		NavTitle.TextXAlignment = Enum.TextXAlignment.Center
+		NavTitle.Position = UDim2.new(0,0,0,13)
+		NavTitle.Size = UDim2.new(1,0,0,20)
+		NavFooter.Visible = false
+		PageHolder.Position = UDim2.new(0,72,0,10)
+		PageHolder.Size = UDim2.new(1,-82,1,-20)
+
+		for _,data in pairs(TabButtons) do
+			data.label.Visible = false
+			data.icon.Position = UDim2.new(0.5,-12,0,0)
+			data.icon.TextXAlignment = Enum.TextXAlignment.Center
+			data.icon.Size = UDim2.fromOffset(24,39)
+		end
+	else
+		Main.Size = UDim2.new(0.78,0,0.82,0)
+		Shadow.Size = Main.Size
+		Nav.Size = UDim2.new(0,142,1,-20)
+		NavTitle.Text = "KAT  /  ULTRA"
+		NavTitle.TextXAlignment = Enum.TextXAlignment.Left
+		NavTitle.Position = UDim2.new(0,15,0,13)
+		NavTitle.Size = UDim2.new(1,-30,0,20)
+		NavFooter.Visible = true
+		PageHolder.Position = UDim2.new(0,164,0,10)
+		PageHolder.Size = UDim2.new(1,-174,1,-20)
+
+		for _,data in pairs(TabButtons) do
+			data.label.Visible = true
+			data.icon.Position = UDim2.new(0,13,0,0)
+			data.icon.Size = UDim2.fromOffset(23,39)
+			data.icon.TextXAlignment = Enum.TextXAlignment.Left
+		end
+	end
+end
+
+track(Main:GetPropertyChangedSignal("AbsoluteSize"):Connect(updateResponsiveLayout))
+updateResponsiveLayout()
 
 local NavFooter = new("TextLabel",{
 	BackgroundTransparency = 1,
